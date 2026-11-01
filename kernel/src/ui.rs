@@ -1,0 +1,390 @@
+//! The Stage 1 screen: the "OS operating" banner and two buttons.
+//!
+//! Buttons can be driven with the keyboard (Tab / arrows / Enter / Space, or
+//! the `P` and `U` accelerators) or the PS/2 mouse.
+
+use crate::fb::{Color, Fb};
+use crate::ps2::{Event, Key, Ps2};
+use crate::strbuf::StrBuf;
+use core::fmt::Write;
+
+const BG: Color = Color(0x0B, 0x10, 0x20);
+const FG: Color = Color(0xE6, 0xED, 0xF3);
+const DIM: Color = Color(0x8B, 0x94, 0x9E);
+const OK: Color = Color(0x3F, 0xB9, 0x50);
+const WARN: Color = Color(0xF0, 0xB4, 0x29);
+const ERR: Color = Color(0xF8, 0x51, 0x49);
+
+/// What the user asked for.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Action {
+    PowerOff,
+    BootToFirmware,
+}
+
+struct Button {
+    label: &'static str,
+    action: Action,
+    accent: Color,
+    enabled: bool,
+}
+
+#[derive(Clone, Copy)]
+struct Rect {
+    x: i32,
+    y: i32,
+    w: i32,
+    h: i32,
+}
+
+impl Rect {
+    fn contains(&self, px: i32, py: i32) -> bool {
+        px >= self.x && px < self.x + self.w && py >= self.y && py < self.y + self.h
+    }
+}
+
+const CURSOR_W: i32 = 12;
+const CURSOR_H: i32 = 19;
+const CURSOR: [&str; CURSOR_H as usize] = [
+    "X           ",
+    "XX          ",
+    "X.X         ",
+    "X..X        ",
+    "X...X       ",
+    "X....X      ",
+    "X.....X     ",
+    "X......X    ",
+    "X.......X   ",
+    "X........X  ",
+    "X.....XXXXX ",
+    "X..X..X     ",
+    "X.X X..X    ",
+    "XX  X..X    ",
+    "X    X..X   ",
+    "     X..X   ",
+    "      X..X  ",
+    "      X..X  ",
+    "       XX   ",
+];
+
+pub struct Ui {
+    fb: Fb,
+    scale: i32,
+    buttons: [Button; 2],
+    rects: [Rect; 2],
+    focus: usize,
+    hover: Option<usize>,
+    pressed: Option<usize>,
+    mx: i32,
+    my: i32,
+    left_down: bool,
+    saved: [u32; (CURSOR_W * CURSOR_H) as usize],
+    cursor_shown: bool,
+    status_y: i32,
+    has_mouse: bool,
+}
+
+impl Ui {
+    pub fn new(fb: Fb, firmware_setup_available: bool, has_mouse: bool) -> Self {
+        let scale = ((fb.width / 320).min(fb.height / 200)).clamp(1, 6) as i32;
+        let buttons = [
+            Button {
+                label: "Power off",
+                action: Action::PowerOff,
+                accent: Color(0xC6, 0x36, 0x2F),
+                enabled: true,
+            },
+            Button {
+                label: "Boot into UEFI",
+                action: Action::BootToFirmware,
+                accent: Color(0x2F, 0x6F, 0xDB),
+                enabled: firmware_setup_available,
+            },
+        ];
+        let bw = Fb::text_width("Boot into UEFI", scale) + 14 * scale;
+        let bh = 8 * scale + 14 * scale;
+        let gap = 10 * scale;
+        let total = 2 * bw + gap;
+        let x0 = (fb.width as i32 - total) / 2;
+        let y0 = fb.height as i32 / 2;
+        let rects = [
+            Rect {
+                x: x0,
+                y: y0,
+                w: bw,
+                h: bh,
+            },
+            Rect {
+                x: x0 + bw + gap,
+                y: y0,
+                w: bw,
+                h: bh,
+            },
+        ];
+        let (mx, my) = (fb.width as i32 / 2, fb.height as i32 * 3 / 4);
+        Self {
+            status_y: y0 + bh + 12 * scale,
+            fb,
+            scale,
+            buttons,
+            rects,
+            focus: 0,
+            hover: None,
+            pressed: None,
+            mx,
+            my,
+            left_down: false,
+            saved: [0; (CURSOR_W * CURSOR_H) as usize],
+            cursor_shown: false,
+            has_mouse,
+        }
+    }
+
+    /// Logs the layout on the serial console (consumed by the end-to-end tests).
+    pub fn describe(&self) {
+        kprintln!(
+            "ui: screen {}x{} scale {}",
+            self.fb.width,
+            self.fb.height,
+            self.scale
+        );
+        for (b, r) in self.buttons.iter().zip(self.rects.iter()) {
+            let name = match b.action {
+                Action::PowerOff => "PowerOff",
+                Action::BootToFirmware => "BootToFirmware",
+            };
+            kprintln!(
+                "ui: button {} rect={},{},{},{} enabled={}",
+                name,
+                r.x,
+                r.y,
+                r.w,
+                r.h,
+                b.enabled
+            );
+        }
+        kprintln!("ui: cursor start {},{}", self.mx, self.my);
+    }
+
+    /// Draws the static screen contents.
+    pub fn draw_all(&mut self, info: &str) {
+        self.hide_cursor();
+        let (w, h, s) = (self.fb.width as i32, self.fb.height as i32, self.scale);
+        self.fb.fill_rect(0, 0, w, h, BG);
+        self.fb.draw_text_centered(h / 5, "OS operating", 2 * s, OK);
+        self.fb.draw_text_centered(h / 5 + 22 * s, info, s, DIM);
+        let hint = if self.has_mouse {
+            "Click a button, or Tab / arrows + Enter.  P = power off, U = UEFI setup"
+        } else {
+            "Tab / arrows + Enter.  P = power off, U = UEFI setup"
+        };
+        self.fb
+            .draw_text_centered(h - 14 * s, hint, (s / 2).max(1), DIM);
+        for i in 0..self.buttons.len() {
+            self.draw_button(i);
+        }
+        self.show_cursor();
+    }
+
+    fn state_color(&self, i: usize) -> (Color, Color, Color) {
+        // (fill, border, text)
+        let b = &self.buttons[i];
+        if !b.enabled {
+            return (
+                Color(0x1C, 0x21, 0x28),
+                Color(0x30, 0x36, 0x3D),
+                Color(0x6E, 0x76, 0x81),
+            );
+        }
+        let pressed = self.pressed == Some(i) && self.left_down;
+        let lift = |c: Color, d: i16| {
+            Color(
+                (i16::from(c.0) + d).clamp(0, 255) as u8,
+                (i16::from(c.1) + d).clamp(0, 255) as u8,
+                (i16::from(c.2) + d).clamp(0, 255) as u8,
+            )
+        };
+        let fill = if pressed {
+            lift(b.accent, -40)
+        } else if self.hover == Some(i) {
+            lift(b.accent, 30)
+        } else {
+            b.accent
+        };
+        let border = if self.focus == i {
+            Color(0xFF, 0xFF, 0xFF)
+        } else {
+            lift(b.accent, -30)
+        };
+        (fill, border, Color(0xFF, 0xFF, 0xFF))
+    }
+
+    fn draw_button(&mut self, i: usize) {
+        let r = self.rects[i];
+        let (fill, border, text) = self.state_color(i);
+        let s = self.scale;
+        self.fb.fill_rect(r.x, r.y, r.w, r.h, fill);
+        self.fb
+            .stroke_rect(r.x, r.y, r.w, r.h, (s / 2).max(1) + 1, border);
+        let label = self.buttons[i].label;
+        let tw = Fb::text_width(label, s);
+        self.fb.draw_text(
+            r.x + (r.w - tw) / 2,
+            r.y + (r.h - 8 * s) / 2,
+            label,
+            s,
+            text,
+        );
+    }
+
+    /// Shows a one-line status message below the buttons.
+    pub fn set_status(&mut self, msg: &str, level: Level) {
+        self.hide_cursor();
+        let s = self.scale;
+        let line_h = 8 * s + 4;
+        self.fb
+            .fill_rect(0, self.status_y, self.fb.width as i32, line_h, BG);
+        let color = match level {
+            Level::Info => FG,
+            Level::Warn => WARN,
+            Level::Error => ERR,
+        };
+        self.fb.draw_text_centered(self.status_y, msg, s, color);
+        self.show_cursor();
+    }
+
+    // ---- cursor -----------------------------------------------------------
+
+    fn hide_cursor(&mut self) {
+        if !self.cursor_shown || !self.has_mouse {
+            return;
+        }
+        for cy in 0..CURSOR_H {
+            for cx in 0..CURSOR_W {
+                if CURSOR[cy as usize].as_bytes()[cx as usize] != b' ' {
+                    let v = self.saved[(cy * CURSOR_W + cx) as usize];
+                    self.fb.set_raw(self.mx + cx, self.my + cy, v);
+                }
+            }
+        }
+        self.cursor_shown = false;
+    }
+
+    fn show_cursor(&mut self) {
+        if self.cursor_shown || !self.has_mouse {
+            return;
+        }
+        let black = self.fb.pixel_value(Color(0, 0, 0));
+        let white = self.fb.pixel_value(Color(255, 255, 255));
+        for cy in 0..CURSOR_H {
+            for cx in 0..CURSOR_W {
+                let c = CURSOR[cy as usize].as_bytes()[cx as usize];
+                if c == b' ' {
+                    continue;
+                }
+                self.saved[(cy * CURSOR_W + cx) as usize] =
+                    self.fb.read_raw(self.mx + cx, self.my + cy);
+                self.fb.set_raw(
+                    self.mx + cx,
+                    self.my + cy,
+                    if c == b'X' { black } else { white },
+                );
+            }
+        }
+        self.cursor_shown = true;
+    }
+
+    // ---- input ------------------------------------------------------------
+
+    fn button_at(&self, x: i32, y: i32) -> Option<usize> {
+        (0..self.rects.len()).find(|&i| self.rects[i].contains(x, y))
+    }
+
+    fn refresh_buttons(&mut self) {
+        self.hide_cursor();
+        for i in 0..self.buttons.len() {
+            self.draw_button(i);
+        }
+        self.show_cursor();
+    }
+
+    fn activate(&self, i: usize) -> Option<Action> {
+        Some(self.buttons[i].action)
+    }
+
+    /// Blocks until the user activates a button and returns the chosen action.
+    pub fn run(&mut self, ps2: &mut Ps2) -> Action {
+        self.refresh_buttons();
+        loop {
+            let Some(ev) = ps2.poll() else {
+                core::hint::spin_loop();
+                continue;
+            };
+            match ev {
+                Event::Key(k) => {
+                    let n = self.buttons.len();
+                    match k {
+                        Key::Tab | Key::Right | Key::Down => self.focus = (self.focus + 1) % n,
+                        Key::BackTab | Key::Left | Key::Up => self.focus = (self.focus + n - 1) % n,
+                        Key::Enter | Key::Space => {
+                            if let Some(a) = self.activate(self.focus) {
+                                return a;
+                            }
+                        }
+                        Key::Char(b'p') => return Action::PowerOff,
+                        Key::Char(b'u') => return Action::BootToFirmware,
+                        _ => continue,
+                    }
+                    self.refresh_buttons();
+                }
+                Event::Mouse { dx, dy, left } => {
+                    self.hide_cursor();
+                    self.mx = (self.mx + dx).clamp(0, self.fb.width as i32 - 1);
+                    self.my = (self.my + dy).clamp(0, self.fb.height as i32 - 1);
+                    let over = self.button_at(self.mx, self.my);
+                    let was_down = self.left_down;
+                    self.left_down = left;
+                    let mut result = None;
+                    if left && !was_down {
+                        self.pressed = over;
+                        if let Some(i) = over {
+                            self.focus = i;
+                        }
+                    } else if !left && was_down {
+                        if over.is_some() && over == self.pressed {
+                            result = over;
+                        }
+                        self.pressed = None;
+                    }
+                    let changed = over != self.hover || left != was_down;
+                    self.hover = over;
+                    if changed {
+                        for i in 0..self.buttons.len() {
+                            self.draw_button(i);
+                        }
+                    }
+                    self.show_cursor();
+                    if let Some(a) = result.and_then(|i| self.activate(i)) {
+                        return a;
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+pub enum Level {
+    Info,
+    Warn,
+    Error,
+}
+
+/// Formats the descriptive line shown under the banner.
+pub fn info_line(buf: &mut StrBuf<96>, fb: &Fb, firmware: &str) {
+    let _ = write!(
+        buf,
+        "KS_OS 0.1.0 | x86_64 | {} | {}x{}",
+        firmware, fb.width, fb.height
+    );
+}
