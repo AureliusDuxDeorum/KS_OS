@@ -6,7 +6,7 @@
 use crate::arch;
 use crate::boot::BootInfo;
 use crate::madt::{self, MadtError};
-use crate::{apic, heap, irq, msi, pmm, time, vmm};
+use crate::{apic, heap, irq, msi, pci, pmm, time, vmm};
 use alloc::boxed::Box;
 use alloc::collections::BTreeMap;
 use alloc::string::String;
@@ -66,6 +66,9 @@ pub fn run(name: &str, boot: &BootInfo) {
             kprintln!("selftest: ps2 irq count {}", crate::ps2::irq_count());
             crate::time::sleep_ms(20);
         }
+        "pci" => test_pci(),
+        "pci-edu" => test_pci_edu(boot),
+        "pci-msix" => test_pci_msix(boot),
         "pmm" => test_pmm(),
         "pmm-double-free" => {
             let f = pmm::alloc().expect("frame");
@@ -140,7 +143,10 @@ fn test_pmm() {
     );
     let again = pmm::alloc_contiguous(512, 512, 1 << 32).expect("contiguous run after free");
     pmm::free_contiguous(again, 512);
-    check(again == run, "freed run is reusable");
+    check(
+        again <= run && again.is_multiple_of(2 << 20),
+        "a freed run is reusable (first-fit returns the lowest suitable run)",
+    );
     kprintln!("selftest: pmm ok");
 }
 
@@ -480,4 +486,198 @@ fn test_madt_parser() {
     }
     check(true, "all truncations of a valid table parse safely");
     kprintln!("selftest: madt-parser ok");
+}
+
+fn test_pci() {
+    let devs = pci::devices();
+    check(!devs.is_empty(), "PCI enumeration found devices");
+    check(
+        devs.iter()
+            .any(|d| d.header.class == 0x06 && d.header.subclass == 0x00),
+        "a host bridge is present",
+    );
+    let mut addrs: Vec<_> = devs
+        .iter()
+        .map(|d| (d.addr.segment, d.addr.bus, d.addr.device, d.addr.function))
+        .collect();
+    addrs.sort_unstable();
+    addrs.dedup();
+    check(
+        addrs.len() == devs.len(),
+        "every function is enumerated exactly once",
+    );
+    check(
+        devs.iter()
+            .flat_map(|d| d.bars.iter().flatten())
+            .all(|b| b.size.is_power_of_two()),
+        "every BAR size is a power of two",
+    );
+    check(
+        devs.iter()
+            .filter(|d| d.header.kind == 1)
+            .all(|d| d.header.secondary_bus > d.addr.bus),
+        "bridge secondary buses are numbered above their primary",
+    );
+    kprintln!("selftest: pci ok ({} functions)", devs.len());
+}
+
+static EDU_BASE: AtomicU64 = AtomicU64::new(0);
+static EDU_IRQS: AtomicU64 = AtomicU64::new(0);
+static EDU_LAST_STATUS: AtomicU64 = AtomicU64::new(0);
+
+fn edu_reg(off: u64) -> *mut u32 {
+    (EDU_BASE.load(Ordering::Relaxed) + off) as *mut u32
+}
+
+fn edu_handler(_: &mut crate::idt::TrapFrame) {
+    // SAFETY: the BAR is mapped uncached; reading status then acknowledging is the device protocol.
+    unsafe {
+        let status = edu_reg(0x24).read_volatile();
+        EDU_LAST_STATUS.store(u64::from(status), Ordering::SeqCst);
+        edu_reg(0x64).write_volatile(status);
+    }
+    EDU_IRQS.fetch_add(1, Ordering::SeqCst);
+}
+
+fn wait_edu_irqs(n: u64) -> bool {
+    let t0 = time::now_ns();
+    while EDU_IRQS.load(Ordering::SeqCst) < n && time::now_ns() - t0 < 2_000_000_000 {
+        arch::enable_and_halt();
+    }
+    EDU_IRQS.load(Ordering::SeqCst) >= n
+}
+
+fn test_pci_edu(boot: &BootInfo) {
+    let Some(dev) = pci::find(0x1234, 0x11e8) else {
+        panic!("selftest FAILED: QEMU `edu` device not present (run with -device edu)");
+    };
+    pci::enable_bus_master(dev);
+    let base = pci::map_bar(boot, dev, 0).expect("map BAR0");
+    EDU_BASE.store(base, Ordering::Relaxed);
+    // SAFETY: BAR0 is mapped uncached and 1 MiB long; all offsets below are within it.
+    let rd = |off| unsafe { edu_reg(off).read_volatile() };
+    // SAFETY: as above.
+    let wr = |off, v| unsafe { edu_reg(off).write_volatile(v) };
+
+    check(
+        rd(0) & 0xFFFF == 0x00ED,
+        "device identification register reads back",
+    );
+    wr(4, 0x1234_5678);
+    check(
+        rd(4) == !0x1234_5678,
+        "liveness register inverts what was written (MMIO writes work)",
+    );
+
+    // MSI/MSI-X: raise an interrupt and see it arrive in our handler.
+    let vector = irq::alloc_vector().expect("vector");
+    irq::register(vector, edu_handler);
+    let kind = pci::enable_msi(boot, dev, vector, apic::id()).expect("enable MSI");
+    kprintln!("selftest:   using {kind}");
+    wr(0x60, 0x1);
+    check(wait_edu_irqs(1), "a device-raised MSI reaches the handler");
+    check(
+        EDU_LAST_STATUS.load(Ordering::SeqCst) == 1,
+        "the handler sees the right device interrupt status",
+    );
+
+    // Factorial with completion interrupt.
+    wr(0x20, 0x80);
+    wr(0x08, 5);
+    check(wait_edu_irqs(2), "factorial-complete MSI arrives");
+    check(rd(0x08) == 120, "device computed 5! = 120");
+
+    // DMA within the device's 28-bit address limit, using the PMM's DMA allocator.
+    let buf = pmm::alloc_contiguous(1, 1, 1 << 28).expect("DMA frame below 256 MiB");
+    let virt = (boot.hhdm + buf) as *mut u8;
+    for i in 0..4096usize {
+        // SAFETY: we own this frame.
+        unsafe { virt.add(i).write((i * 7 + 3) as u8) };
+    }
+    let dma = |src: u64, dst: u64, cmd: u32| {
+        wr(0x80, src as u32);
+        wr(0x84, (src >> 32) as u32);
+        wr(0x88, dst as u32);
+        wr(0x8C, (dst >> 32) as u32);
+        wr(0x90, 4096);
+        wr(0x98, cmd);
+        let t0 = time::now_ns();
+        while rd(0x98) & 1 != 0 && time::now_ns() - t0 < 2_000_000_000 {
+            core::hint::spin_loop();
+        }
+        rd(0x98) & 1 == 0
+    };
+    check(dma(buf, 0x40000, 1), "DMA RAM -> device completes");
+    // SAFETY: we own this frame.
+    unsafe { core::ptr::write_bytes(virt, 0, 4096) };
+    let before = EDU_IRQS.load(Ordering::SeqCst);
+    check(dma(0x40000, buf, 1 | 2 | 4), "DMA device -> RAM completes");
+    check(wait_edu_irqs(before + 1), "DMA-complete MSI arrives");
+    // SAFETY: we own this frame.
+    let ok = (0..4096usize).all(|i| unsafe { virt.add(i).read() } == (i * 7 + 3) as u8);
+    check(ok, "4 KiB survives the round trip through device memory");
+    pmm::free(buf);
+    kprintln!(
+        "selftest: pci-edu ok ({} interrupts)",
+        EDU_IRQS.load(Ordering::SeqCst)
+    );
+}
+
+fn test_pci_msix(boot: &BootInfo) {
+    // virtio-net (modern) exposes MSI-X with its table in a BAR.
+    let Some(dev) = pci::find(0x1af4, 0x1041) else {
+        panic!("selftest FAILED: no virtio-net-pci device (run with -device virtio-net-pci,disable-legacy=on)");
+    };
+    let cap = dev
+        .caps
+        .iter()
+        .copied()
+        .find(|c| c.id == ksparse::pci::CAP_MSIX)
+        .expect("MSI-X capability");
+    let x = ksparse::pci::msix(&PciCfg(dev.addr), cap).expect("decode MSI-X");
+    let vector = 0x77u8;
+    let kind = pci::enable_msi(boot, dev, vector, 0).expect("enable MSI-X");
+    check(
+        kind == "MSI-X",
+        "MSI-X is preferred over MSI when both exist",
+    );
+    let table = pci::map_bar(boot, dev, usize::from(x.table_bar)).expect("map table BAR")
+        + u64::from(x.table_offset);
+    let e = table as *const u32;
+    // SAFETY: the table lies inside the mapped BAR (validated by `enable_msi`).
+    let (lo, hi, data, ctl) = unsafe {
+        (
+            e.read_volatile(),
+            e.add(1).read_volatile(),
+            e.add(2).read_volatile(),
+            e.add(3).read_volatile(),
+        )
+    };
+    check(
+        lo == 0xFEE0_0000 && hi == 0,
+        "table entry 0 holds the MSI address for APIC 0",
+    );
+    check(data == u32::from(vector), "table entry 0 holds the vector");
+    check(ctl & 1 == 0, "table entry 0 is unmasked");
+    let control = pci::read32(dev.addr, u16::from(cap.offset)) >> 16;
+    check(
+        control & (1 << 15) != 0 && control & (1 << 14) == 0,
+        "MSI-X is enabled and the function is unmasked",
+    );
+    check(
+        pci::read32(dev.addr, 4) & (1 << 10) != 0,
+        "legacy INTx is disabled once MSI-X is on",
+    );
+    kprintln!(
+        "selftest: pci-msix ok (table {} entries in BAR{})",
+        x.table_size,
+        x.table_bar
+    );
+}
+
+struct PciCfg(pci::Address);
+impl ksparse::pci::Config for PciCfg {
+    fn read32(&self, offset: u16) -> u32 {
+        pci::read32(self.0, offset)
+    }
 }

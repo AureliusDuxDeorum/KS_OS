@@ -321,6 +321,60 @@ fn test_interrupts(ctx: &Ctx, _image: &Path) -> Result<()> {
     Ok(())
 }
 
+const PCI_DEVICES: &[&str] = &[
+    "-device",
+    "edu",
+    "-device",
+    "qemu-xhci",
+    "-device",
+    "virtio-net-pci,disable-legacy=on",
+];
+
+fn test_ksparse_host(ctx: &Ctx, _image: &Path) -> Result<()> {
+    let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".into());
+    let out = std::process::Command::new(cargo)
+        .current_dir(&ctx.root)
+        .args(["test", "--quiet", "-p", "ksparse"])
+        .output()?;
+    if !out.status.success() {
+        return Err(format!(
+            "ksparse host tests failed:\n{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        )
+        .into());
+    }
+    println!("ok   ksparse parser unit, mutation and noise tests (host)");
+    Ok(())
+}
+
+fn test_pci(ctx: &Ctx, _image: &Path) -> Result<()> {
+    let log = selftest_log_with(ctx, "pci", "selftest: pci ok", PCI_DEVICES)?;
+    expect_all(
+        &log,
+        "pci",
+        &[
+            "pci: configuration via ECAM (MCFG)",
+            "1234:11e8 class 00.ff.00 msi",
+            "1b36:000d class 0c.03.30 msi-x",
+            "1af4:1041 class 02.00.00 msi-x",
+            "bar0 Mem64",
+            "size=0x4000",
+        ],
+    )?;
+    println!("ok   PCI enumeration finds edu, xHCI and virtio-net with correct classes, BAR sizes and capabilities");
+    Ok(())
+}
+
+fn test_pci_msi(ctx: &Ctx, _image: &Path) -> Result<()> {
+    let log = selftest_log_with(ctx, "pci-edu", "selftest: pci-edu ok", PCI_DEVICES)?;
+    expect_all(&log, "pci-edu", &["using MSI", "device computed 5! = 120"])?;
+    let log = selftest_log_with(ctx, "pci-msix", "selftest: pci-msix ok", PCI_DEVICES)?;
+    expect_all(&log, "pci-msix", &["MSI-X is enabled"])?;
+    println!("ok   device MSI delivery, DMA through the PMM's DMA allocator, and MSI-X table programming");
+    Ok(())
+}
+
 fn test_x2apic(ctx: &Ctx, _image: &Path) -> Result<()> {
     // QEMU's software emulation (TCG) has no x2APIC; this needs hardware virtualisation.
     if !Path::new("/dev/kvm").exists() {
@@ -353,7 +407,8 @@ fn test_nmi_real(ctx: &Ctx, image: &Path) -> Result<()> {
 pub fn run_all(ctx: &Ctx, image: &Path) -> Result<()> {
     let mut failed = 0;
     type TestFn = fn(&Ctx, &Path) -> Result<()>;
-    let tests: [(&str, TestFn); 13] = [
+    let tests: [(&str, TestFn); 16] = [
+        ("ksparse", test_ksparse_host),
         ("boot", test_boot_banner),
         ("poweroff-key", test_power_off_key),
         ("poweroff-mouse", test_power_off_mouse),
@@ -363,6 +418,8 @@ pub fn run_all(ctx: &Ctx, image: &Path) -> Result<()> {
         ("stack-overflow", test_stack_overflow),
         ("nmi", test_nmi),
         ("interrupts", test_interrupts),
+        ("pci", test_pci),
+        ("pci-msi", test_pci_msi),
         ("x2apic", test_x2apic),
         ("nmi-real", test_nmi_real),
         ("memory", test_memory_selftests),
