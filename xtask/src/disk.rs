@@ -8,17 +8,19 @@ const SECTOR: usize = 512;
 const ESP_MIB: usize = 64;
 const FIRST_LBA: u64 = 2048;
 
-const LIMINE_CONF: &str = "\
-timeout: 0
-serial: yes
-
-/KS_OS
-    protocol: limine
-    path: boot():/boot/kernel
-";
+/// Renders `limine.conf`; `cmdline` is passed to the kernel (empty for production images).
+fn limine_conf(cmdline: &str) -> String {
+    let mut conf = String::from(
+        "timeout: 0\nserial: yes\n\n/KS_OS\n    protocol: limine\n    path: boot():/boot/kernel\n",
+    );
+    if !cmdline.is_empty() {
+        conf.push_str(&format!("    cmdline: {cmdline}\n"));
+    }
+    conf
+}
 
 /// Builds the EFI System Partition contents.
-pub fn make_esp(limine: &Limine, kernel: &[u8]) -> Result<Vec<u8>> {
+pub fn make_esp(limine: &Limine, kernel: &[u8], cmdline: &str) -> Result<Vec<u8>> {
     let mut storage = Cursor::new(vec![0u8; ESP_MIB * 1024 * 1024]);
     fatfs::format_volume(
         &mut storage,
@@ -36,7 +38,7 @@ pub fn make_esp(limine: &Limine, kernel: &[u8]) -> Result<Vec<u8>> {
             Ok(())
         };
         write("EFI/BOOT/BOOTX64.EFI", &limine.bootx64)?;
-        write("limine.conf", LIMINE_CONF.as_bytes())?;
+        write("limine.conf", limine_conf(cmdline).as_bytes())?;
         write("boot/kernel", kernel)?;
     }
     Ok(storage.into_inner())

@@ -5,7 +5,12 @@
 //!   image   [--debug]        build a bootable UEFI disk image (GPT + FAT ESP + Limine)
 //!   run     [--debug] [--headless]
 //!                            boot the image in QEMU with OVMF
-//!   test    [--debug]        automated boot, power-off, UEFI-setup and mouse tests in QEMU
+//!   test    [--debug]        automated boot, power-off, UEFI-setup, mouse and exception tests in QEMU
+//!   image-cmdline <args>     build target/ks_os-cmdline.img whose kernel command line is <args>
+//!                            (e.g. `selftest=page-fault`)
+//!
+//! Environment: `QEMU_EXTRA="-d int -D log"` appends QEMU arguments; `OVMF_CODE`/`OVMF_VARS`
+//! override firmware discovery.
 
 mod disk;
 mod limine;
@@ -66,13 +71,19 @@ fn build_kernel(ctx: &Ctx) -> Result<()> {
 
 fn build_image(ctx: &Ctx) -> Result<PathBuf> {
     build_kernel(ctx)?;
+    let out = ctx.image();
+    write_image(ctx, "", &out)?;
+    println!("image: {}", out.display());
+    Ok(out)
+}
+
+/// Writes a disk image whose kernel command line is `cmdline` (kernel must already be built).
+pub fn write_image(ctx: &Ctx, cmdline: &str, out: &Path) -> Result<()> {
     let limine = limine::fetch(ctx)?;
     let kernel = std::fs::read(ctx.kernel_elf())?;
-    let esp = disk::make_esp(&limine, &kernel)?;
-    let img = disk::wrap_gpt(&esp);
-    std::fs::write(ctx.image(), img)?;
-    println!("image: {}", ctx.image().display());
-    Ok(ctx.image())
+    let esp = disk::make_esp(&limine, &kernel, cmdline)?;
+    std::fs::write(out, disk::wrap_gpt(&esp))?;
+    Ok(())
 }
 
 fn main() -> ExitCode {
@@ -89,6 +100,9 @@ fn main() -> ExitCode {
     let result = match cmd {
         "build" => build_kernel(&ctx),
         "image" => build_image(&ctx).map(|_| ()),
+        "image-cmdline" => build_kernel(&ctx).and_then(|()| {
+            write_image(&ctx, &args[1], &ctx.target_dir().join("ks_os-cmdline.img"))
+        }),
         "run" => build_image(&ctx).and_then(|img| qemu::run_interactive(&ctx, &img, headless)),
         "test" => build_image(&ctx).and_then(|img| tests::run_all(&ctx, &img)),
         other => Err(format!("unknown command `{other}`").into()),

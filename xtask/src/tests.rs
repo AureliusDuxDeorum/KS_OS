@@ -160,14 +160,103 @@ fn test_uefi_setup(ctx: &Ctx, image: &Path) -> Result<()> {
     Ok(())
 }
 
+/// Boots a self-test image and returns the serial log once `needle` appears.
+fn selftest_log(ctx: &Ctx, name: &str, needle: &str) -> Result<String> {
+    let img = ctx.target_dir().join(format!("ks_os-selftest-{name}.img"));
+    crate::write_image(ctx, &format!("selftest={name}"), &img)?;
+    let s = qemu::spawn_test(ctx, &img, &format!("t-selftest-{name}"))?;
+    let r = wait_for(&s, needle, Duration::from_secs(60));
+    let log = serial(&s);
+    drop(s);
+    let _ = std::fs::remove_file(&img);
+    r.map_err(|_| format!("selftest `{name}`: `{needle}` never appeared; log:\n{log}"))?;
+    Ok(log)
+}
+
+fn expect_all(log: &str, name: &str, needles: &[&str]) -> Result<()> {
+    for n in needles {
+        if !log.contains(n) {
+            return Err(format!("selftest `{name}`: missing `{n}` in log:\n{log}").into());
+        }
+    }
+    Ok(())
+}
+
+fn test_exception_breakpoint(ctx: &Ctx, _image: &Path) -> Result<()> {
+    let log = selftest_log(ctx, "breakpoint", "selftest: breakpoint returned")?;
+    expect_all(
+        &log,
+        "breakpoint",
+        &[
+            "exception: #BP breakpoint",
+            "cpu: GDT/TSS/IDT loaded, stack guard pages installed",
+        ],
+    )?;
+    println!("ok   #BP is handled and execution resumes");
+    Ok(())
+}
+
+fn test_fatal_exceptions(ctx: &Ctx, _image: &Path) -> Result<()> {
+    let cases: [(&str, &[&str]); 4] = [
+        ("divide", &["KERNEL FAULT: #DE divide error"]),
+        ("invalid-opcode", &["KERNEL FAULT: #UD invalid opcode"]),
+        (
+            "general-protection",
+            &["KERNEL FAULT: #GP general protection fault"],
+        ),
+        (
+            "page-fault",
+            &[
+                "KERNEL FAULT: #PF page fault",
+                "cr2=0x10",
+                "read of non-present page",
+            ],
+        ),
+    ];
+    for (name, needles) in cases {
+        let log = selftest_log(ctx, name, "rax=")?;
+        expect_all(&log, name, needles)?;
+    }
+    println!("ok   #DE #UD #GP #PF produce a diagnosable fatal fault");
+    Ok(())
+}
+
+fn test_stack_overflow(ctx: &Ctx, _image: &Path) -> Result<()> {
+    let log = selftest_log(ctx, "stack-overflow", "rax=")?;
+    expect_all(
+        &log,
+        "stack-overflow",
+        &[
+            "KERNEL FAULT: #DF double fault",
+            "stack overflow",
+            "overflowed: kernel stack",
+        ],
+    )?;
+    println!("ok   kernel stack overflow is caught by the guard page and reported via the IST");
+    Ok(())
+}
+
+fn test_nmi(ctx: &Ctx, _image: &Path) -> Result<()> {
+    // Real NMIs are masked at the LAPIC by the bootloader until the APIC phase configures LINT1,
+    // so this exercises the NMI IDT gate and its IST stack through a software `int 2`.
+    let log = selftest_log(ctx, "nmi", "selftest: nmi returned")?;
+    expect_all(&log, "nmi", &["exception: NMI"])?;
+    println!("ok   NMI gate runs on its IST stack and execution resumes");
+    Ok(())
+}
+
 pub fn run_all(ctx: &Ctx, image: &Path) -> Result<()> {
     let mut failed = 0;
     type TestFn = fn(&Ctx, &Path) -> Result<()>;
-    let tests: [(&str, TestFn); 4] = [
+    let tests: [(&str, TestFn); 8] = [
         ("boot", test_boot_banner),
         ("poweroff-key", test_power_off_key),
         ("poweroff-mouse", test_power_off_mouse),
         ("uefi-setup", test_uefi_setup),
+        ("exception-breakpoint", test_exception_breakpoint),
+        ("exception-fatal", test_fatal_exceptions),
+        ("stack-overflow", test_stack_overflow),
+        ("nmi", test_nmi),
     ];
     for (name, t) in tests {
         if let Err(e) = t(ctx, image) {

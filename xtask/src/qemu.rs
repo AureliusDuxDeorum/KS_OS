@@ -85,6 +85,10 @@ fn base_command(
         .arg(format!("file:{}", serial_log.display()));
     c.arg("-monitor")
         .arg(format!("unix:{},server,nowait", monitor_sock.display()));
+    // Developer hook: `QEMU_EXTRA="-d int -D target/qemu/int.log" cargo xtask run`.
+    if let Ok(extra) = std::env::var("QEMU_EXTRA") {
+        c.args(extra.split_whitespace());
+    }
     if display_none {
         c.args(["-display", "none"]);
     }
