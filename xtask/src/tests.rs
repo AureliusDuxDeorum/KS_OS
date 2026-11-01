@@ -371,6 +371,7 @@ fn test_usb_enumeration(ctx: &Ctx, _image: &Path) -> Result<()> {
             "usb: hub on slot",
             "behind hub slot",
             "4 device(s) enumerated",
+            "bt: no Bluetooth controller found on USB",
         ],
     )?;
     println!("ok   xHCI: MSI-X, enumeration, hub with a device behind it, HID binding (and a machine with no PS/2)");
@@ -450,11 +451,76 @@ fn test_usb_bulk(ctx: &Ctx, _image: &Path) -> Result<()> {
     Ok(())
 }
 
+fn test_firmware_modules(ctx: &Ctx, _image: &Path) -> Result<()> {
+    // A synthetic firmware blob travels: host file -> ESP -> Limine module -> kernel boot info.
+    let blob = crate::firmware::Blob {
+        name: "TEST_FIRMWARE_0.bin".into(),
+        data: (0..1500u32).map(|i| (i * 7) as u8).collect(),
+    };
+    let fw_ctx = Ctx {
+        root: ctx.root.clone(),
+        release: ctx.release,
+        firmware: vec![blob],
+    };
+    let img = ctx.target_dir().join("ks_os-selftest-firmware.img");
+    crate::write_image(&fw_ctx, "", &img)?;
+    let s = qemu::spawn_test(ctx, &img, "t-firmware")?;
+    let r = wait_for(&s, "ui: ready", Duration::from_secs(60));
+    let log = serial(&s);
+    drop(s);
+    let _ = std::fs::remove_file(&img);
+    r.map_err(|_| format!("boot with a firmware module failed:\n{log}"))?;
+    expect_all(
+        &log,
+        "firmware",
+        &["boot: module TEST_FIRMWARE_0.bin (1500 bytes)"],
+    )?;
+    println!("ok   firmware blobs reach the kernel as Limine boot modules");
+    Ok(())
+}
+
+fn test_diagnostic_mode(ctx: &Ctx, image: &Path) -> Result<()> {
+    // No PS/2 controller and no USB devices at all: the UI must show the live log by itself.
+    let s = qemu::spawn_test_with(ctx, image, "t-diagnostic", &["-machine", "q35,i8042=off"])?;
+    wait_for(
+        &s,
+        "ui: no input device; diagnostic log view active",
+        Duration::from_secs(60),
+    )?;
+    let shot = ctx.target_dir().join("qemu").join("diagnostic.ppm");
+    monitor(&s, &format!("screendump {}", shot.display()))?;
+    std::thread::sleep(Duration::from_millis(500));
+    drop(s);
+    let ppm = std::fs::read(&shot)?;
+    // The header bar of the diagnostic screen is white: a plain black/white screenshot check.
+    let white = ppm
+        .windows(3)
+        .skip(20)
+        .step_by(3)
+        .take(2000)
+        .filter(|p| p == &[255, 255, 255])
+        .count();
+    if white < 100 {
+        return Err("diagnostic screen was not drawn".into());
+    }
+    println!("ok   with no working input device the UI shows a live diagnostic log");
+    Ok(())
+}
+
+fn test_rng(ctx: &Ctx, _image: &Path) -> Result<()> {
+    let log = selftest_log_with(ctx, "rng", "selftest: rng ok", &["-cpu", "max"])?;
+    if log.contains("selftest FAILED") {
+        return Err(format!("rng reported a failure:\n{log}").into());
+    }
+    println!("ok   hardware RNG (RDSEED/RDRAND) is available and well behaved");
+    Ok(())
+}
+
 fn test_ksparse_host(ctx: &Ctx, _image: &Path) -> Result<()> {
     let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".into());
     let out = std::process::Command::new(cargo)
         .current_dir(&ctx.root)
-        .args(["test", "--quiet", "-p", "ksparse"])
+        .args(["test", "--quiet", "-p", "ksparse", "-p", "ksbt"])
         .output()?;
     if !out.status.success() {
         return Err(format!(
@@ -527,7 +593,7 @@ fn test_nmi_real(ctx: &Ctx, image: &Path) -> Result<()> {
 pub fn run_all(ctx: &Ctx, image: &Path) -> Result<()> {
     let mut failed = 0;
     type TestFn = fn(&Ctx, &Path) -> Result<()>;
-    let tests: [(&str, TestFn); 20] = [
+    let tests: [(&str, TestFn); 23] = [
         ("ksparse", test_ksparse_host),
         ("boot", test_boot_banner),
         ("poweroff-key", test_power_off_key),
@@ -542,6 +608,9 @@ pub fn run_all(ctx: &Ctx, image: &Path) -> Result<()> {
         ("pci-msi", test_pci_msi),
         ("usb", test_usb_enumeration),
         ("usb-hid", test_usb_hid),
+        ("firmware-modules", test_firmware_modules),
+        ("diagnostic", test_diagnostic_mode),
+        ("rng", test_rng),
         ("usb-ui", test_usb_ui),
         ("usb-bulk", test_usb_bulk),
         ("x2apic", test_x2apic),

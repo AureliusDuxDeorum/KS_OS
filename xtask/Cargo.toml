@@ -9,3 +9,4 @@ publish.workspace = true
 sha2 = "0.10"
 crc32fast = "1"
 fatfs = "0.3"
+ruzstd = "0.9.1"

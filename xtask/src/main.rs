@@ -2,7 +2,10 @@
 //!
 //! Commands:
 //!   build   [--debug]        compile the kernel
-//!   image   [--debug]        build a bootable UEFI disk image (GPT + FAT ESP + Limine)
+//!   image   [--debug] [--firmware-dir DIR]
+//!                            build a bootable UEFI disk image (GPT + FAT ESP + Limine); firmware
+//!                            blobs (*.bin, *.bin.zst) in DIR are decompressed and shipped as boot
+//!                            modules (e.g. the MediaTek Bluetooth patch files; never committed)
 //!   run     [--debug] [--headless]
 //!                            boot the image in QEMU with OVMF
 //!   test    [--debug]        automated boot, power-off, UEFI-setup, mouse and exception tests in QEMU
@@ -13,6 +16,7 @@
 //! override firmware discovery.
 
 mod disk;
+mod firmware;
 mod limine;
 mod qemu;
 mod tests;
@@ -25,6 +29,8 @@ pub type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 pub struct Ctx {
     pub root: PathBuf,
     pub release: bool,
+    /// Firmware blobs supplied with `--firmware-dir`; shipped to the kernel as boot modules.
+    pub firmware: Vec<firmware::Blob>,
 }
 
 impl Ctx {
@@ -81,7 +87,7 @@ fn build_image(ctx: &Ctx) -> Result<PathBuf> {
 pub fn write_image(ctx: &Ctx, cmdline: &str, out: &Path) -> Result<()> {
     let limine = limine::fetch(ctx)?;
     let kernel = std::fs::read(ctx.kernel_elf())?;
-    let esp = disk::make_esp(&limine, &kernel, cmdline)?;
+    let esp = disk::make_esp(&limine, &kernel, cmdline, &ctx.firmware)?;
     std::fs::write(out, disk::wrap_gpt(&esp))?;
     Ok(())
 }
@@ -92,9 +98,23 @@ fn main() -> ExitCode {
         eprintln!("usage: cargo xtask <build|image|run|test> [--debug] [--headless]");
         return ExitCode::from(2);
     };
+    let fw_dir = args
+        .iter()
+        .position(|a| a == "--firmware-dir")
+        .and_then(|i| args.get(i + 1).cloned())
+        .or_else(|| std::env::var("KS_FIRMWARE_DIR").ok());
+    let firmware = match fw_dir.as_deref().map(|d| firmware::load(Path::new(d))) {
+        Some(Ok(f)) => f,
+        Some(Err(e)) => {
+            eprintln!("error: {e}");
+            return ExitCode::FAILURE;
+        }
+        None => Vec::new(),
+    };
     let ctx = Ctx {
         root: workspace_root(),
         release: !args.iter().any(|a| a == "--debug"),
+        firmware,
     };
     let headless = args.iter().any(|a| a == "--headless");
     let result = match cmd {
