@@ -6,3 +6,6 @@
 *.log
 .vscode/
 .idea/
+/fuzz/target/
+/fuzz/corpus/
+/fuzz/artifacts/

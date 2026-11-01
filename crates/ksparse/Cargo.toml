@@ -1,0 +1,9 @@
+[package]
+name = "ksparse"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "Pure, bounds-checked parsers for firmware and hardware data (ACPI, PCI) shared by the KS_OS kernel and its host-side tests/fuzzers."
+
+[dependencies]

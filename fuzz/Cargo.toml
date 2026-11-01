@@ -1,0 +1,22 @@
+[package]
+name = "ksparse-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+ksparse = { path = "../crates/ksparse" }
+
+# Standalone workspace: fuzzing needs a nightly toolchain and must not affect the main build.
+[workspace]
+
+[[bin]]
+name = "parsers"
+path = "fuzz_targets/parsers.rs"
+test = false
+doc = false
+bench = false
