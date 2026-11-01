@@ -302,9 +302,18 @@ impl Efi {
                 if d.attr & ATTR_RUNTIME == 0 && d.attr & (ATTR_RO | ATTR_XP) == 0 {
                     continue;
                 }
+                // W^X is never relaxed: RO+XP image sections are as stated; a section the
+                // firmware leaves unrestricted falls back to its region type's default
+                // (code stays executable, everything else stays non-executable).
+                let (write, exec) = match (d.attr & ATTR_RO != 0, d.attr & ATTR_XP != 0) {
+                    (true, false) => (false, true),
+                    (false, true) => (true, false),
+                    (true, true) => (false, false),
+                    (false, false) => (d.kind != TYPE_RUNTIME_CODE, d.kind == TYPE_RUNTIME_CODE),
+                };
                 let perm = Perm {
-                    write: d.attr & ATTR_RO == 0,
-                    exec: d.attr & ATTR_XP == 0,
+                    write,
+                    exec,
                     cache: if d.kind == TYPE_MMIO {
                         Cache::Uncached
                     } else {
@@ -404,7 +413,8 @@ impl Efi {
         let mut size = 8usize;
         let mut attrs = 0u32;
         // SAFETY: runtime services are mapped per `init`; pointers are to live locals.
-        let s = unsafe {
+        // Interrupts stay off: firmware is not reentrant against our handlers.
+        let s = arch::without_interrupts(|| unsafe {
             ((*self.rt).get_variable)(
                 name.as_ptr(),
                 &GLOBAL_VARIABLE,
@@ -412,7 +422,7 @@ impl Efi {
                 &mut size,
                 (&mut value as *mut u64).cast(),
             )
-        };
+        });
         if s == EFI_SUCCESS {
             Ok(value)
         } else {
@@ -437,7 +447,7 @@ impl Efi {
         };
         let new = current | OS_INDICATIONS_BOOT_TO_FW_UI;
         // SAFETY: valid name/GUID/data pointers to live memory.
-        let s = unsafe {
+        let s = arch::without_interrupts(|| unsafe {
             ((*self.rt).set_variable)(
                 OS_INDICATIONS.as_ptr(),
                 &GLOBAL_VARIABLE,
@@ -445,7 +455,7 @@ impl Efi {
                 8,
                 (&new as *const u64).cast(),
             )
-        };
+        });
         if s != EFI_SUCCESS {
             return EfiError::Firmware("SetVariable(OsIndications)", s);
         }
