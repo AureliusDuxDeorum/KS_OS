@@ -78,7 +78,12 @@ fn test_boot_banner(ctx: &Ctx, image: &Path) -> Result<()> {
     let s = boot(ctx, image, "t-boot")?;
     let log = serial(&s);
     kill(s);
-    for needle in ["KS_OS 0.1.0 booting", "OS operating"] {
+    for needle in [
+        "KS_OS 0.1.0 booting",
+        "OS operating",
+        "0 W^X violations",
+        "pmm:",
+    ] {
         if !log.contains(needle) {
             return Err(format!("missing `{needle}`").into());
         }
@@ -189,7 +194,8 @@ fn test_exception_breakpoint(ctx: &Ctx, _image: &Path) -> Result<()> {
         "breakpoint",
         &[
             "exception: #BP breakpoint",
-            "cpu: GDT/TSS/IDT loaded, stack guard pages installed",
+            "cpu: GDT/TSS/IDT loaded",
+            "stack guard pages installed",
         ],
     )?;
     println!("ok   #BP is handled and execution resumes");
@@ -245,10 +251,49 @@ fn test_nmi(ctx: &Ctx, _image: &Path) -> Result<()> {
     Ok(())
 }
 
+fn test_memory_selftests(ctx: &Ctx, _image: &Path) -> Result<()> {
+    for (name, needle) in [
+        ("pmm", "selftest: pmm ok"),
+        ("heap", "selftest: heap ok"),
+        ("mmio-map", "selftest: mmio-map ok"),
+        ("vmm-layout", "selftest: vmm-layout ok"),
+    ] {
+        let log = selftest_log(ctx, name, needle)?;
+        if log.contains("selftest FAILED") {
+            return Err(format!("selftest `{name}` reported a failure:\n{log}").into());
+        }
+    }
+    println!("ok   PMM, heap, MMIO mapping and kernel W^X layout self-tests");
+    Ok(())
+}
+
+fn test_memory_violations(ctx: &Ctx, _image: &Path) -> Result<()> {
+    let cases: [(&str, &[&str]); 3] = [
+        (
+            "write-text",
+            &["KERNEL FAULT: #PF", "write protection violation"],
+        ),
+        (
+            "exec-data",
+            &[
+                "KERNEL FAULT: #PF",
+                "instruction fetch from non-executable page",
+            ],
+        ),
+        ("pmm-double-free", &["KERNEL PANIC", "double free"]),
+    ];
+    for (name, needles) in cases {
+        let log = selftest_log(ctx, name, "PANIC").or_else(|_| selftest_log(ctx, name, "rax="))?;
+        expect_all(&log, name, needles)?;
+    }
+    println!("ok   writing kernel code, executing data and double-freeing a frame are all caught");
+    Ok(())
+}
+
 pub fn run_all(ctx: &Ctx, image: &Path) -> Result<()> {
     let mut failed = 0;
     type TestFn = fn(&Ctx, &Path) -> Result<()>;
-    let tests: [(&str, TestFn); 8] = [
+    let tests: [(&str, TestFn); 10] = [
         ("boot", test_boot_banner),
         ("poweroff-key", test_power_off_key),
         ("poweroff-mouse", test_power_off_mouse),
@@ -257,6 +302,8 @@ pub fn run_all(ctx: &Ctx, image: &Path) -> Result<()> {
         ("exception-fatal", test_fatal_exceptions),
         ("stack-overflow", test_stack_overflow),
         ("nmi", test_nmi),
+        ("memory", test_memory_selftests),
+        ("memory-violations", test_memory_violations),
     ];
     for (name, t) in tests {
         if let Err(e) = t(ctx, image) {
