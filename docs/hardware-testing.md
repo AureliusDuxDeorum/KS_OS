@@ -2,29 +2,29 @@
 
 How to test KS_OS on the owner's machine and what to send back. Nothing here needs a serial port.
 
-## 1. Build the image with the Bluetooth firmware
-Copy the firmware files from Linux into one folder (they are never committed):
+## 1. Get the image (no build tools needed)
+The ready-made boot image lives in the repository's top-level folder **`KS_OS-v0.1.0/`**, with its
+own `README.txt`. Add the Bluetooth firmware (copied from your Linux install; it is not redistributed)
+with the helper script in the same folder:
 
 ```bash
 mkdir -p ~/ksfw
-cp /lib/firmware/mediatek/BT_RAM_CODE_MT7961_1_2_hdr.bin.zst ~/ksfw/
+cp /lib/firmware/mediatek/BT_RAM_CODE_MT7961_1_2_hdr.bin.zst  ~/ksfw/
 cp /lib/firmware/mediatek/BT_RAM_CODE_MT7961_1a_2_hdr.bin.zst ~/ksfw/
+sudo apt install mtools zstd            # once
+cd KS_OS-v0.1.0
+./add-bluetooth-firmware.sh KS_OS-v0.1.0.img ~/ksfw
 ```
 
-On the development machine (Rust via `rustup`, `git`):
+Then write the image to a USB stick (**this erases the stick**; check the device with `lsblk`):
 
 ```bash
-cargo xtask image --firmware-dir ~/ksfw
-```
-
-The build prints each file's size and SHA-256. Write `target/ks_os.img` to a USB stick (**this
-erases the stick**; replace `/dev/sdX` after checking with `lsblk`):
-
-```bash
-sudo dd if=target/ks_os.img of=/dev/sdX bs=4M conv=fsync status=progress
+sudo dd if=KS_OS-v0.1.0.img of=/dev/sdX bs=4M conv=fsync status=progress
 ```
 
 Boot it from the firmware boot menu. Secure Boot must be off (the image is not signed).
+
+(Developers can instead build their own with `cargo xtask image --firmware-dir ~/ksfw`.)
 
 ## 2. What you should see
 - `OS operating`, then the two buttons (Power off / Boot into UEFI).

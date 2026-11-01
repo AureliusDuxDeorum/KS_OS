@@ -8,7 +8,12 @@ tooling, and the decision record.
 on serial and screen, and offers a **Power off** button and a **Boot into UEFI**
 button (keyboard or PS/2 mouse).
 
-## Quick start
+## Download the boot image
+The latest ready-to-write image is in the top-level folder **[`KS_OS-v0.1.0/`](KS_OS-v0.1.0/)** — one file to
+write to a USB stick, plus a plain-text `README.txt`. Versions are `X.Y.Z` (see
+[docs/VERSIONING.md](docs/VERSIONING.md)); changes are listed in [CHANGELOG.md](CHANGELOG.md).
+
+## Quick start (developers)
 
 Requirements: Rust via `rustup` (the pinned toolchain installs itself), `git`,
 `qemu-system-x86`, `ovmf`.
@@ -16,7 +21,8 @@ Requirements: Rust via `rustup` (the pinned toolchain installs itself), `git`,
 ```bash
 cargo xtask run          # build, create image, boot in QEMU (serial on this terminal)
 cargo xtask test         # end-to-end tests: boot banner, power off (key + mouse), UEFI setup
-cargo xtask image        # just build target/ks_os.img (write it to a USB stick for hardware)
+cargo xtask image        # just build target/ks_os.img
+cargo xtask release      # assemble the KS_OS-vX.Y.Z/ release folder at the repository root
 ```
 
 In the QEMU window (or with a USB or PS/2 keyboard and mouse on real hardware): **Tab / arrows +
