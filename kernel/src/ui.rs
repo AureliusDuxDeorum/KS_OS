@@ -321,8 +321,8 @@ impl Ui {
         Some(self.buttons[i].action)
     }
 
-    /// Full-screen kernel log; any of L / Esc / Enter / Space returns to the main screen.
-    fn show_log(&mut self, ps2: &mut Ps2) {
+    /// Draws the full-screen kernel log with `title` in the header bar.
+    fn render_log(&mut self, title: &str) {
         self.hide_cursor();
         let scale = if self.fb.width >= 1024 { 2 } else { 1 };
         let (w, h) = (self.fb.width as i32, self.fb.height as i32);
@@ -330,8 +330,7 @@ impl Ui {
         let rows = (h / (8 * scale + 2) - 2).max(4) as usize;
         self.fb.fill_rect(0, 0, w, h, BLACK);
         self.fb.fill_rect(0, 0, w, 8 * scale + 4, WHITE);
-        self.fb
-            .draw_text(8, 2, "KERNEL LOG - L / Esc / Enter to return", scale, BLACK);
+        self.fb.draw_text(8, 2, title, scale, BLACK);
         for (i, line) in crate::klog::tail(rows, cols).iter().enumerate() {
             self.fb.draw_text(
                 8,
@@ -341,6 +340,18 @@ impl Ui {
                 GRAY_LIGHT,
             );
         }
+    }
+
+    fn redraw_main(&mut self) {
+        let mut info = StrBuf::<96>::new();
+        info_line(&mut info, &self.fb, "UEFI");
+        self.draw_all(info.as_str());
+        self.show_cursor();
+    }
+
+    /// Full-screen kernel log; any of L / Esc / Enter / Space returns to the main screen.
+    fn show_log(&mut self, ps2: &mut Ps2) {
+        self.render_log("KERNEL LOG - L / Esc / Enter to return");
         loop {
             match ps2.poll().or_else(crate::input::pop) {
                 Some(Event::Key(Key::Char(b'l') | Key::Escape | Key::Enter | Key::Space)) => break,
@@ -348,18 +359,51 @@ impl Ui {
                 None => crate::arch::enable_and_halt(),
             }
         }
-        // Redraw the main screen.
-        let mut info = StrBuf::<96>::new();
-        info_line(&mut info, &self.fb, "UEFI");
-        self.draw_all(info.as_str());
-        self.show_cursor();
+        self.redraw_main();
+    }
+
+    fn input_available(ps2: &Ps2) -> bool {
+        ps2.has_keyboard
+            || ps2.has_mouse
+            || crate::usb::hid::bound_count() > 0
+            || crate::bt::connected_count() > 0
+    }
+
+    /// Shown automatically when no input device works at all: a live, refreshing kernel log, so a
+    /// machine whose keyboard/mouse are not (yet) usable can still be diagnosed from the screen.
+    fn diagnostic_log(&mut self, ps2: &mut Ps2) {
+        kprintln!("ui: no input device; diagnostic log view active");
+        loop {
+            self.render_log(
+                "DIAGNOSTICS - no working input device yet; log refreshes every second",
+            );
+            for _ in 0..20 {
+                if Self::input_available(ps2) || ps2.poll().or_else(crate::input::pop).is_some() {
+                    self.redraw_main();
+                    return;
+                }
+                crate::bt::service();
+                crate::time::sleep_ms(50);
+            }
+        }
     }
 
     /// Blocks until the user activates a button and returns the chosen action.
     pub fn run(&mut self, ps2: &mut Ps2) -> Action {
         self.refresh_buttons();
+        let mut diagnosed = false;
         loop {
             let Some(ev) = ps2.poll().or_else(crate::input::pop) else {
+                if !diagnosed && !Self::input_available(ps2) {
+                    diagnosed = true;
+                    self.diagnostic_log(ps2);
+                    continue;
+                }
+                // Bluetooth work happens in short slices while the UI is idle.
+                crate::bt::service();
+                if let Some(s) = crate::bt::take_status() {
+                    self.set_status(&s, Level::Info);
+                }
                 // Sleep until the next interrupt (input or the 1 kHz tick).
                 crate::arch::enable_and_halt();
                 continue;
@@ -386,6 +430,8 @@ impl Ui {
                     self.refresh_buttons();
                 }
                 Event::Mouse { dx, dy, left } => {
+                    // A pointing device may appear at any time (e.g. a Bluetooth mouse connecting).
+                    self.has_mouse = true;
                     self.hide_cursor();
                     self.mx = (self.mx + dx).clamp(0, self.fb.width as i32 - 1);
                     self.my = (self.my + dy).clamp(0, self.fb.height as i32 - 1);

@@ -69,3 +69,52 @@ pub fn pop() -> Option<Event> {
     q.len -= 1;
     ev
 }
+
+/// Maps a HID keyboard usage (page 0x07) to a UI key.
+pub fn usage_to_key(usage: u8, shift: bool) -> Option<Key> {
+    Some(match usage {
+        0x2B if shift => Key::BackTab,
+        0x2B => Key::Tab,
+        0x4F => Key::Right,
+        0x50 => Key::Left,
+        0x51 => Key::Down,
+        0x52 => Key::Up,
+        0x28 | 0x58 => Key::Enter,
+        0x2C => Key::Space,
+        0x29 => Key::Escape,
+        0x13 => Key::Char(b'p'),
+        0x18 => Key::Char(b'u'),
+        0x0F => Key::Char(b'l'),
+        _ => return None,
+    })
+}
+
+/// Turns successive decoded HID reports from one device into events: key presses are reported
+/// on the report where they first appear, pointer reports whenever anything changed.
+#[derive(Default)]
+pub struct Tracker {
+    prev_keys: alloc::vec::Vec<u8>,
+    prev_buttons: u32,
+}
+
+impl Tracker {
+    pub fn publish(&mut self, input: &ksparse::hid::Input, keyboard: bool, pointer: bool) {
+        if keyboard {
+            let shift = input.modifiers & 0b0010_0010 != 0;
+            for &k in input.keys.iter().filter(|k| !self.prev_keys.contains(k)) {
+                if let Some(key) = usage_to_key(k, shift) {
+                    push(Event::Key(key));
+                }
+            }
+            self.prev_keys.clone_from(&input.keys);
+        }
+        if pointer && (input.dx != 0 || input.dy != 0 || input.buttons != self.prev_buttons) {
+            push(Event::Mouse {
+                dx: input.dx,
+                dy: input.dy,
+                left: input.buttons & 1 != 0,
+            });
+            self.prev_buttons = input.buttons;
+        }
+    }
+}

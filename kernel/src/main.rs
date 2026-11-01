@@ -13,6 +13,7 @@ mod acpi;
 mod apic;
 mod arch;
 mod boot;
+mod bt;
 mod dma;
 mod efi;
 mod fb;
@@ -31,6 +32,7 @@ mod paging;
 mod pci;
 mod pmm;
 mod ps2;
+mod rng;
 mod selftest;
 mod serial;
 mod stacks;
@@ -205,6 +207,11 @@ extern "C" fn kmain() -> ! {
 
     // USB: xHCI controllers, hubs and HID devices.
     usb::init(&boot);
+    // Bluetooth controllers are USB devices: bring them up now that USB is enumerated.
+    bt::init(&boot, efi.as_ref());
+    for m in boot.modules() {
+        kprintln!("boot: module {} ({} bytes)", m.name(), m.data.len());
+    }
 
     if let Some(test) = selftest::requested(boot.cmdline) {
         selftest::run(test, &boot);

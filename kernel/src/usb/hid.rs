@@ -5,7 +5,7 @@
 
 use super::{xhci, Device, DeviceRef, UsbError};
 use crate::dma::Dma;
-use crate::input::{self, Event, Key};
+use crate::input;
 use crate::sync::IrqMutex;
 use alloc::vec::Vec;
 use ksparse::hid::{self, ReportDescriptor};
@@ -19,12 +19,16 @@ struct Bound {
     desc: ReportDescriptor,
     keyboard: bool,
     pointer: bool,
-    prev_keys: Vec<u8>,
-    prev_buttons: u32,
+    tracker: input::Tracker,
     errors: u32,
 }
 
 static BOUND: IrqMutex<Vec<Bound>> = IrqMutex::new(Vec::new());
+
+/// Number of bound USB HID interfaces (keyboards and pointers).
+pub fn bound_count() -> usize {
+    BOUND.lock().len()
+}
 
 /// True if a USB pointing device is bound.
 pub fn has_pointer() -> bool {
@@ -37,25 +41,6 @@ pub fn reports_seen() -> usize {
 }
 
 static REPORTS: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(0);
-
-/// Maps a HID keyboard usage (page 0x07) to a UI key.
-fn usage_to_key(usage: u8, shift: bool) -> Option<Key> {
-    Some(match usage {
-        0x2B if shift => Key::BackTab,
-        0x2B => Key::Tab,
-        0x4F => Key::Right,
-        0x50 => Key::Left,
-        0x51 => Key::Down,
-        0x52 => Key::Up,
-        0x28 | 0x58 => Key::Enter,
-        0x2C => Key::Space,
-        0x29 => Key::Escape,
-        0x13 => Key::Char(b'p'),
-        0x18 => Key::Char(b'u'),
-        0x0F => Key::Char(b'l'),
-        _ => return None,
-    })
-}
 
 /// Binds a HID interface if it is a keyboard or a relative pointer.
 pub fn attach(d: &Device, iface: &Interface) -> Result<(), UsbError> {
@@ -134,8 +119,7 @@ pub fn attach(d: &Device, iface: &Interface) -> Result<(), UsbError> {
         desc,
         keyboard,
         pointer,
-        prev_keys: Vec::new(),
-        prev_buttons: 0,
+        tracker: input::Tracker::default(),
         errors: 0,
     });
     kprintln!(
@@ -154,51 +138,24 @@ pub fn attach(d: &Device, iface: &Interface) -> Result<(), UsbError> {
 
 /// Endpoint completion handler (runs in interrupt context): decode, publish events, requeue.
 fn on_report(dev: DeviceRef, dci: u8, code: u8, residual: u32) {
-    let mut events: [Option<Event>; 20] = [None; 20];
-    let mut n = 0;
     let (phys, len, requeue) = {
         let mut g = BOUND.lock();
         let Some(b) = g.iter_mut().find(|b| b.dev == dev && b.dci == dci) else {
             return;
         };
-        let ok = code == xhci::CC_SUCCESS || code == xhci::CC_SHORT_PACKET;
-        if ok {
+        if code == xhci::CC_SUCCESS || code == xhci::CC_SHORT_PACKET {
             b.errors = 0;
             let got = b.report_len.saturating_sub(residual as usize);
             let report = &b.buf.as_slice()[..got.min(64)];
-            let input = hid::interpret(&b.desc, report);
+            let decoded = hid::interpret(&b.desc, report);
             REPORTS.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
-            if b.keyboard {
-                let shift = input.modifiers & 0b0010_0010 != 0;
-                for &k in input.keys.iter().filter(|k| !b.prev_keys.contains(k)) {
-                    if let (Some(key), true) = (usage_to_key(k, shift), n < events.len()) {
-                        events[n] = Some(Event::Key(key));
-                        n += 1;
-                    }
-                }
-                b.prev_keys = input.keys.clone();
-            }
-            if b.pointer
-                && (input.dx != 0 || input.dy != 0 || input.buttons != b.prev_buttons)
-                && n < events.len()
-            {
-                events[n] = Some(Event::Mouse {
-                    dx: input.dx,
-                    dy: input.dy,
-                    left: input.buttons & 1 != 0,
-                });
-                n += 1;
-                b.prev_buttons = input.buttons;
-            }
+            b.tracker.publish(&decoded, b.keyboard, b.pointer);
         } else {
             b.errors += 1;
         }
         // Give up after repeated errors (e.g. the device was unplugged) rather than storm.
         (b.buf.phys, b.report_len as u32, b.errors < 8)
     };
-    for ev in events.into_iter().take(n).flatten() {
-        input::push(ev);
-    }
     if requeue {
         let _ = xhci::queue(dev, dci, phys, len);
     }

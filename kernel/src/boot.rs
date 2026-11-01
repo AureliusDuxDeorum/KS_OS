@@ -12,6 +12,20 @@ pub struct BootInfo {
     pub efi_memmap: Option<(&'static [u8], usize)>,
     pub bootloader: (&'static str, &'static str),
     pub cmdline: &'static str,
+    modules: &'static [*const limine::File],
+}
+
+/// A file loaded by the bootloader as a module (e.g. Bluetooth firmware).
+pub struct Module {
+    pub path: &'static str,
+    pub data: &'static [u8],
+}
+
+impl Module {
+    /// File name without directories.
+    pub fn name(&self) -> &'static str {
+        self.path.rsplit('/').next().unwrap_or(self.path)
+    }
 }
 
 /// Converts a NUL-terminated C string from the bootloader into a `&str`.
@@ -67,8 +81,17 @@ impl BootInfo {
             .response()
             // SAFETY: Limine supplies a NUL-terminated command line.
             .map_or("", |r| unsafe { cstr(r.cmdline, 128) });
+        let modules = limine::MODULES.response().map_or(&[][..], |r| {
+            if r.module_count == 0 {
+                &[]
+            } else {
+                // SAFETY: Limine provides `module_count` valid file pointers.
+                unsafe { core::slice::from_raw_parts(r.modules, r.module_count as usize) }
+            }
+        });
         Ok(Self {
             cmdline,
+            modules,
             hhdm,
             framebuffer,
             memmap,
@@ -76,6 +99,21 @@ impl BootInfo {
             efi_system_table: limine::EFI_SYSTEM_TABLE.response().map(|r| r.address),
             efi_memmap,
             bootloader,
+        })
+    }
+
+    /// Files the bootloader loaded as modules.
+    pub fn modules(&self) -> impl Iterator<Item = Module> + '_ {
+        self.modules.iter().filter_map(|&f| {
+            // SAFETY: Limine guarantees each file pointer, its path string and its data range are valid
+            // (module memory is mapped in the HHDM for the kernel's lifetime).
+            unsafe {
+                let f = f.as_ref()?;
+                Some(Module {
+                    path: cstr(f.path, 128),
+                    data: core::slice::from_raw_parts(f.address, f.size as usize),
+                })
+            }
         })
     }
 

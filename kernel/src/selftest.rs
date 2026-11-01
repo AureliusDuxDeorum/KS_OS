@@ -66,6 +66,7 @@ pub fn run(name: &str, boot: &BootInfo) {
             kprintln!("selftest: ps2 irq count {}", crate::ps2::irq_count());
             crate::time::sleep_ms(20);
         }
+        "rng" => test_rng(),
         "usb" => test_usb(),
         "usb-hid" => test_usb_hid(),
         "usb-bot" => test_usb_bot(),
@@ -785,4 +786,34 @@ fn test_usb_bot() {
     );
     buf.free();
     kprintln!("selftest: usb-bot ok");
+}
+
+fn test_rng() {
+    use ksbt::Rng;
+    check(
+        crate::rng::available(),
+        "the CPU provides a hardware RNG (run with -cpu max)",
+    );
+    let mut r = crate::rng::HwRng;
+    let mut a = [0u8; 64];
+    let mut b = [0u8; 64];
+    r.fill(&mut a);
+    r.fill(&mut b);
+    check(a != b, "two draws differ");
+    check(
+        a.iter().any(|&x| x != 0) && b.iter().any(|&x| x != 0),
+        "draws are not all zero",
+    );
+    let mut ones = 0u32;
+    for _ in 0..64 {
+        let mut x = [0u8; 32];
+        r.fill(&mut x);
+        ones += x.iter().map(|b| b.count_ones()).sum::<u32>();
+    }
+    let total = 64 * 32 * 8;
+    check(
+        (total * 45 / 100..total * 55 / 100).contains(&ones),
+        "bit balance is within 45-55 %",
+    );
+    kprintln!("selftest: rng ok");
 }

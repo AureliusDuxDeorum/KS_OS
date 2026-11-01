@@ -27,12 +27,20 @@ use alloc::vec::Vec;
 
 #[repr(C)]
 #[derive(Clone, Copy, PartialEq, Eq)]
-struct Guid {
+pub struct Guid {
     d1: u32,
     d2: u16,
     d3: u16,
     d4: [u8; 8],
 }
+
+/// Vendor GUID under which KS_OS stores its own persistent variables.
+pub const KS_VENDOR: Guid = Guid {
+    d1: 0x4B53_4F53,
+    d2: 0xB10E,
+    d3: 0x4C65,
+    d4: [0x9A, 0x01, 0x6B, 0x73, 0x6F, 0x73, 0x00, 0x01],
+};
 
 const GLOBAL_VARIABLE: Guid = Guid {
     d1: 0x8BE4_DF61,
@@ -41,7 +49,7 @@ const GLOBAL_VARIABLE: Guid = Guid {
     d4: [0xAA, 0x0D, 0x00, 0xE0, 0x98, 0x03, 0x2B, 0x8C],
 };
 
-const fn utf16<const N: usize>(s: &str) -> [u16; N] {
+pub const fn utf16<const N: usize>(s: &str) -> [u16; N] {
     let b = s.as_bytes();
     assert!(b.len() + 1 == N);
     let mut out = [0u16; N];
@@ -64,7 +72,7 @@ const VAR_ATTRS_NV_BS_RT: u32 = 0x7;
 const SYSTEM_TABLE_SIGNATURE: u64 = 0x5453_5953_2049_4249; // "IBI SYST"
 const RUNTIME_SERVICES_SIGNATURE: u64 = 0x5652_4553_544E_5552; // "RUNTSERV"
 
-type Status = usize;
+pub type Status = usize;
 const EFI_SUCCESS: Status = 0;
 const EFI_NOT_FOUND: Status = (1 << 63) | 14;
 
@@ -147,6 +155,7 @@ impl From<MapError> for EfiError {
     }
 }
 
+#[derive(Clone, Copy)]
 pub struct Efi {
     rt: *const RuntimeServices,
     pub mode: Mode,
@@ -369,6 +378,45 @@ impl Efi {
         });
         if s == EFI_SUCCESS {
             Ok(value)
+        } else {
+            Err(s)
+        }
+    }
+
+    /// Reads a non-volatile variable into `buf`; returns the number of bytes, or the EFI status on failure.
+    pub fn read_variable(
+        &self,
+        name: &[u16],
+        guid: &Guid,
+        buf: &mut [u8],
+    ) -> Result<usize, Status> {
+        let mut size = buf.len();
+        let mut attrs = 0u32;
+        // SAFETY: runtime services are mapped per `init`; all pointers refer to live locals/slices.
+        let s = arch::without_interrupts(|| unsafe {
+            ((*self.rt).get_variable)(name.as_ptr(), guid, &mut attrs, &mut size, buf.as_mut_ptr())
+        });
+        if s == EFI_SUCCESS {
+            Ok(size)
+        } else {
+            Err(s)
+        }
+    }
+
+    /// Writes a non-volatile variable (boot-service + runtime accessible).
+    pub fn write_variable(&self, name: &[u16], guid: &Guid, data: &[u8]) -> Result<(), Status> {
+        // SAFETY: as in `read_variable`.
+        let s = arch::without_interrupts(|| unsafe {
+            ((*self.rt).set_variable)(
+                name.as_ptr(),
+                guid,
+                VAR_ATTRS_NV_BS_RT,
+                data.len(),
+                data.as_ptr(),
+            )
+        });
+        if s == EFI_SUCCESS {
+            Ok(())
         } else {
             Err(s)
         }

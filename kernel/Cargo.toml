@@ -14,3 +14,4 @@ bench = false
 font8x8 = { version = "0.3", default-features = false }
 spin = { version = "0.9", default-features = false, features = ["spin_mutex", "once"] }
 ksparse = { path = "../crates/ksparse" }
+ksbt = { path = "../crates/ksbt" }

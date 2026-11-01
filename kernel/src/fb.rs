@@ -189,3 +189,23 @@ pub fn show_fatal(title: &str, detail: &str, rip: u64, cr2: u64, error: u64) {
         gray,
     );
 }
+
+/// Draws a one-line notice banner (e.g. a pairing passkey) over the lower part of the screen.
+pub fn show_notice(msg: &str) {
+    let Some(mut guard) = FATAL_FB.try_lock() else {
+        return;
+    };
+    let Some(fb) = guard.as_mut() else { return };
+    let scale = ((fb.width / 400).min(fb.height / 240)).clamp(1, 4) as i32;
+    let w = fb.width as i32;
+    let y = fb.height as i32 * 3 / 4;
+    fb.fill_rect(0, y, w, 14 * scale, Color(0xFF, 0xFF, 0xFF));
+    let tw = Fb::text_width(msg, scale);
+    fb.draw_text(
+        ((w - tw) / 2).max(0),
+        y + 3 * scale,
+        msg,
+        scale,
+        Color(0, 0, 0),
+    );
+}
