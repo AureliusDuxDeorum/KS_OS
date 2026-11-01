@@ -1,6 +1,6 @@
 # ADR-0004: Rust (nightly-pinned) with minimal assembly
 
-- **Status:** Accepted
+- **Status:** Superseded by [ADR-0007](0007-stable-rust-toolchain.md) (toolchain channel only; language decision stands)
 - **Date:** 2026-11-01
 - **Deciders:** Project owner, Claude
 - **Stage/Phase:** S1
