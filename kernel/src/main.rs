@@ -10,13 +10,17 @@ mod log;
 mod acpi;
 mod arch;
 mod boot;
+mod efi;
 mod fb;
+mod frames;
 mod limine;
+mod paging;
 mod ps2;
 mod serial;
 mod strbuf;
 mod ui;
 
+use core::fmt::Write;
 use strbuf::StrBuf;
 use ui::{Action, Level, Ui};
 
@@ -58,6 +62,8 @@ extern "C" fn _start() -> ! {
     // The one line this stage exists to print.
     kprintln!("OS operating");
 
+    let mut frames = frames::BumpFrames::new(&boot);
+
     // Firmware services needed by the buttons.
     let acpi = match acpi::Acpi::init(&boot) {
         Ok(a) => {
@@ -69,6 +75,24 @@ extern "C" fn _start() -> ! {
             None
         }
     };
+    let efi = match efi::Efi::init(&boot, &mut frames) {
+        Ok(e) => {
+            kprintln!(
+                "efi: runtime services up ({:?} mode, OsIndicationsSupported={:#x}, strict W^X={})",
+                e.mode,
+                e.os_indications_supported,
+                e.strict_wx
+            );
+            Some(e)
+        }
+        Err(e) => {
+            kprintln!("efi: runtime services unavailable ({e:?})");
+            None
+        }
+    };
+
+    kprintln!("frames: {} early page(s) allocated", frames.allocated());
+
     let mut ps2 = ps2::Ps2::init();
     kprintln!("ps2: keyboard={} mouse={}", ps2.has_keyboard, ps2.has_mouse);
 
@@ -83,7 +107,8 @@ extern "C" fn _start() -> ! {
 
     let mut info = StrBuf::<96>::new();
     ui::info_line(&mut info, &fb, "UEFI");
-    let mut ui = Ui::new(fb, false, ps2.has_mouse);
+    let setup_ok = efi.as_ref().is_some_and(|e| e.firmware_setup_supported());
+    let mut ui = Ui::new(fb, setup_ok, ps2.has_mouse);
     ui.draw_all(info.as_str());
     ui.describe();
     kprintln!("ui: ready");
@@ -97,6 +122,10 @@ extern "C" fn _start() -> ! {
                     let e = a.power_off();
                     kprintln!("acpi: power off did not take effect ({e:?})");
                 }
+                if let Some(e) = &efi {
+                    e.shutdown();
+                    kprintln!("efi: shutdown returned");
+                }
                 // Emulator-specific last resorts (QEMU/Bochs/VirtualBox ACPI ports).
                 // SAFETY: writes to ports that are no-ops on hardware lacking them.
                 unsafe {
@@ -107,8 +136,21 @@ extern "C" fn _start() -> ! {
                 ui.set_status("Power off failed: no working method", Level::Error);
             }
             Action::BootToFirmware => {
-                kprintln!("action: reboot into UEFI firmware setup (not available yet)");
-                ui.set_status("UEFI runtime services unavailable", Level::Error);
+                kprintln!("action: reboot into UEFI firmware setup");
+                let Some(e) = &efi else {
+                    ui.set_status("UEFI runtime services unavailable", Level::Error);
+                    continue;
+                };
+                if !e.firmware_setup_supported() {
+                    ui.set_status("Firmware does not support boot-to-setup", Level::Warn);
+                    continue;
+                }
+                ui.set_status("Rebooting into UEFI setup...", Level::Info);
+                let err = e.reboot_into_firmware_setup();
+                kprintln!("efi: reboot into setup failed: {err:?}");
+                let mut msg = StrBuf::<64>::new();
+                let _ = write!(msg, "Reboot into UEFI failed: {err:?}");
+                ui.set_status(msg.as_str(), Level::Error);
             }
         }
     }
