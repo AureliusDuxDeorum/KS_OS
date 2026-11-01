@@ -25,7 +25,7 @@ Target hardware: Intel I225-V NIC, USB Bluetooth controller (Realtek/MediaTek/Br
 - ☐ S2.P3 Interrupts & time — LAPIC/IOAPIC, timer, MSI/MSI-X, interrupt-driven PS/2
 - ☐ S2.P4 ACPI & PCI — host-testable fuzzed table parsers *(closes R9)*, ECAM enumeration, AML decision *(R7)*
 - ☐ S2.P5 USB xHCI — controller, enumeration, hubs, USB HID with full report-descriptor parser *(prerequisite for Bluetooth, since controllers are USB devices; HID parser shared with Bluetooth HID; [ADR-0016](adr/0016-target-hardware-inventory.md), [ADR-0017](adr/0017-bluetooth-first-internal-controller.md))*
-- ☐ S2.P6 Bluetooth — USB HCI transport, vendor firmware loaders (internal MediaTek first, ASUS BT500 optional second; [ADR-0017](adr/0017-bluetooth-first-internal-controller.md)), L2CAP/SDP, SSP pairing, Classic HID, then LE (SMP, ATT/GATT, HOGP), bond handling, unified input events
+- ☐ S2.P6 Bluetooth — USB HCI transport, vendor firmware loaders (internal MediaTek first, ASUS BT500 optional second; [ADR-0017](adr/0017-bluetooth-first-internal-controller.md)), HCI LE, SMP (LE Secure Connections), ATT/GATT, HID-over-GATT first ([ADR-0019](adr/0019-ble-hid-first-and-validation-targets.md)), then L2CAP/SDP, SSP pairing and Classic HID, bond handling, unified input events
 - ☐ S2.P7 Networking — `igc` (I225-V) driver, Ethernet, smoltcp, DHCP, DNS, ICMP, TCP; virtio-net/e1000e for CI
 - ☐ S2.P8 Integration — Bluetooth/network status and pairing screen in the UI, automated + hardware-in-the-loop tests
 - ☐ **Gate G2:** hardening review (cannot close while G1 items R3, R8, R9 are open)

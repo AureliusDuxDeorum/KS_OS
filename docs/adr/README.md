@@ -22,3 +22,4 @@ Process: [ADR-0001](0001-record-architecture-decisions.md). Template: [template.
 | [0016](0016-target-hardware-inventory.md) | Target hardware inventory and input/Bluetooth priorities | Accepted |
 | [0017](0017-bluetooth-first-internal-controller.md) | Bluetooth is the primary input path; internal MediaTek controller first | Accepted |
 | [0018](0018-mediatek-mt7961-bluetooth-target.md) | MediaTek MT7961 (MT7921K) Bluetooth: concrete target and firmware handling | Accepted |
+| [0019](0019-ble-hid-first-and-validation-targets.md) | BLE HID first; validation targets from the owner's Linux logs | Accepted |
