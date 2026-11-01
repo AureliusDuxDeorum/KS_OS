@@ -1,0 +1,17 @@
+[workspace]
+resolver = "2"
+members = ["xtask"]
+
+[workspace.package]
+edition = "2021"
+license = "MIT OR Apache-2.0"
+publish = false
+
+[profile.dev]
+panic = "abort"
+
+[profile.release]
+panic = "abort"
+lto = true
+codegen-units = 1
+debug = "line-tables-only"
