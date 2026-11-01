@@ -148,7 +148,7 @@ impl Fb {
 unsafe impl Send for Fb {}
 
 /// Framebuffer copy used by the fault and panic paths.
-static FATAL_FB: spin::Mutex<Option<Fb>> = spin::Mutex::new(None);
+static FATAL_FB: crate::sync::IrqMutex<Option<Fb>> = crate::sync::IrqMutex::new(None);
 
 /// Registers the framebuffer used to display fatal errors.
 pub fn register_fatal_fb(fb: Fb) {

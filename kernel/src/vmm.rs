@@ -252,3 +252,8 @@ pub fn lookup(boot: &BootInfo, virt: u64) -> Option<crate::paging::Leaf> {
 pub fn audit(boot: &BootInfo) -> (u64, u64) {
     Mapper::new(boot, nx_enabled()).audit_wx(kernel_root())
 }
+
+/// Lists up to `limit` writable+executable mappings in the kernel root (diagnostics).
+pub fn find_wx(boot: &BootInfo, limit: usize) -> alloc::vec::Vec<(u64, u64)> {
+    Mapper::new(boot, nx_enabled()).find_wx(kernel_root(), limit)
+}

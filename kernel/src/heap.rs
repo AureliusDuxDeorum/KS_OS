@@ -9,13 +9,12 @@
 //!
 //! Slab frames are never returned to the PMM (blocks are recycled via the free
 //! lists); large allocations are freed immediately. Freed memory is poisoned in
-//! debug builds. The lock is a spin lock: allocation from interrupt context
-//! is not allowed until it becomes IRQ-safe.
+//! debug builds. The lock is interrupt-safe, so interrupt handlers may allocate.
 
 use crate::pmm;
+use crate::sync::IrqMutex;
 use core::alloc::{GlobalAlloc, Layout};
 use core::ptr::null_mut;
-use spin::Mutex;
 
 const CLASSES: [usize; 8] = [16, 32, 64, 128, 256, 512, 1024, 2048];
 const MAX_SLAB: usize = 2048;
@@ -37,7 +36,7 @@ struct FreeBlock {
 // SAFETY: all access goes through the `HEAP` lock.
 unsafe impl Send for Heap {}
 
-static HEAP: Mutex<Heap> = Mutex::new(Heap {
+static HEAP: IrqMutex<Heap> = IrqMutex::new(Heap {
     hhdm: 0,
     free: [null_mut(); CLASSES.len()],
     slab_frames: 0,

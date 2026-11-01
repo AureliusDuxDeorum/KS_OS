@@ -15,6 +15,8 @@ pub enum AcpiError {
     BadChecksum(&'static str),
     NotMapped(&'static str),
     NoFadt,
+    NoTable,
+    NoPmTimer,
     NoS5,
     NoPm1Control,
     Hung,
@@ -130,39 +132,84 @@ fn find_s5(dsdt: &[u8]) -> Option<(u16, u16)> {
     None
 }
 
+/// Locates an ACPI system description table by signature (checksum-verified).
+pub fn find_table(boot: &BootInfo, sig: &[u8; 4]) -> Result<&'static [u8], AcpiError> {
+    let rsdp_virt = boot.rsdp.ok_or(AcpiError::NoRsdp)?;
+    let rsdp_phys = rsdp_virt.checked_sub(boot.hhdm).ok_or(AcpiError::NoRsdp)?;
+    let rsdp = slice(boot, rsdp_phys, 36, "RSDP")?;
+    if &rsdp[0..8] != b"RSD PTR " || !checksum_ok(&rsdp[0..20]) {
+        return Err(AcpiError::BadChecksum("RSDP"));
+    }
+    let revision = rsdp[15];
+    let (root_phys, wide) = if revision >= 2 && rd64(rsdp, 24) != 0 {
+        (rd64(rsdp, 24), true)
+    } else {
+        (u64::from(rd32(rsdp, 16)), false)
+    };
+    let root = table(boot, root_phys, if wide { "XSDT" } else { "RSDT" })?;
+    let stride = if wide { 8 } else { 4 };
+    for entry in root[36..].chunks_exact(stride) {
+        let phys = if wide {
+            rd64(entry, 0)
+        } else {
+            u64::from(rd32(entry, 0))
+        };
+        if let Ok(hdr) = slice(boot, phys, 8, "SDT header") {
+            if &hdr[0..4] == sig {
+                return table(boot, phys, "SDT");
+            }
+        }
+    }
+    Err(AcpiError::NoTable)
+}
+
+/// The ACPI power-management timer: a fixed-frequency (3.579545 MHz) free-running counter.
+#[derive(Clone, Copy)]
+pub struct PmTimer {
+    port: u16,
+    mask: u32,
+}
+
+/// PM timer frequency in Hz.
+pub const PM_TIMER_HZ: u64 = 3_579_545;
+
+impl PmTimer {
+    /// Reads the (24- or 32-bit) counter.
+    pub fn read(&self) -> u32 {
+        // SAFETY: the port comes from the validated FADT.
+        (unsafe { crate::arch::inl(self.port) }) & self.mask
+    }
+
+    /// Ticks elapsed from `start` to `now`, accounting for wrap-around.
+    pub fn elapsed(&self, start: u32, now: u32) -> u32 {
+        now.wrapping_sub(start) & self.mask
+    }
+}
+
+/// Locates the PM timer through the FADT.
+pub fn pm_timer(boot: &BootInfo) -> Result<PmTimer, AcpiError> {
+    let fadt = find_table(boot, b"FACP")?;
+    if fadt.len() < 80 {
+        return Err(AcpiError::NoFadt);
+    }
+    let blk = rd32(fadt, 76) as u16;
+    if blk == 0 {
+        return Err(AcpiError::NoPmTimer);
+    }
+    let ext32 = rd32(fadt, 112) & (1 << 8) != 0; // TMR_VAL_EXT
+    Ok(PmTimer {
+        port: blk,
+        mask: if ext32 { u32::MAX } else { 0x00FF_FFFF },
+    })
+}
+
 impl Acpi {
     /// Parses the ACPI tables and prepares an S5 transition.
     pub fn init(boot: &BootInfo) -> Result<Self, AcpiError> {
-        let rsdp_virt = boot.rsdp.ok_or(AcpiError::NoRsdp)?;
-        let rsdp_phys = rsdp_virt.checked_sub(boot.hhdm).ok_or(AcpiError::NoRsdp)?;
-        let rsdp = slice(boot, rsdp_phys, 36, "RSDP")?;
-        if &rsdp[0..8] != b"RSD PTR " || !checksum_ok(&rsdp[0..20]) {
-            return Err(AcpiError::BadChecksum("RSDP"));
-        }
-        let revision = rsdp[15];
-        let (root_phys, wide) = if revision >= 2 && rd64(rsdp, 24) != 0 {
-            (rd64(rsdp, 24), true)
-        } else {
-            (u64::from(rd32(rsdp, 16)), false)
-        };
-        let root = table(boot, root_phys, if wide { "XSDT" } else { "RSDT" })?;
-        let stride = if wide { 8 } else { 4 };
-
-        let mut fadt = None;
-        for entry in root[36..].chunks_exact(stride) {
-            let phys = if wide {
-                rd64(entry, 0)
-            } else {
-                u64::from(rd32(entry, 0))
-            };
-            if let Ok(hdr) = slice(boot, phys, 8, "SDT header") {
-                if &hdr[0..4] == b"FACP" {
-                    fadt = Some(table(boot, phys, "FADT")?);
-                    break;
-                }
-            }
-        }
-        let fadt = fadt.ok_or(AcpiError::NoFadt)?;
+        let fadt = find_table(boot, b"FACP").map_err(|e| match e {
+            AcpiError::NoTable => AcpiError::NoFadt,
+            other => other,
+        })?;
         if fadt.len() < 116 {
             return Err(AcpiError::NoFadt);
         }

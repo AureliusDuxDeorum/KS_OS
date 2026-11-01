@@ -1,14 +1,14 @@
 //! 16550 UART driver (COM1), used as the primary debug console.
 
 use crate::arch::{inb, outb};
+use crate::sync::IrqMutex;
 use core::fmt::{self, Write};
-use spin::Mutex;
 
 const COM1: u16 = 0x3F8;
 
 struct Serial;
 
-static SERIAL: Mutex<Serial> = Mutex::new(Serial);
+static SERIAL: IrqMutex<Serial> = IrqMutex::new(Serial);
 
 impl Serial {
     fn put(&mut self, byte: u8) {

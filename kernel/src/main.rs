@@ -10,6 +10,7 @@ extern crate alloc;
 mod log;
 
 mod acpi;
+mod apic;
 mod arch;
 mod boot;
 mod efi;
@@ -18,7 +19,11 @@ mod frames;
 mod gdt;
 mod heap;
 mod idt;
+mod ioapic;
+mod irq;
 mod limine;
+mod madt;
+mod msi;
 mod paging;
 mod pmm;
 mod ps2;
@@ -26,6 +31,8 @@ mod selftest;
 mod serial;
 mod stacks;
 mod strbuf;
+mod sync;
+mod time;
 mod ui;
 mod vmm;
 
@@ -106,11 +113,37 @@ extern "C" fn kmain() -> ! {
     // The one line this stage exists to print.
     kprintln!("OS operating");
 
-    if let Some(test) = selftest::requested(boot.cmdline) {
-        selftest::run(test, &boot);
-    }
-
     let mut frames = frames::Frames;
+
+    // Interrupt hardware: local APIC (with NMI), calibrated clock and tick, I/O APIC.
+    let madt = match acpi::find_table(&boot, b"APIC")
+        .map_err(|e| alloc::format!("{e:?}"))
+        .and_then(|t| madt::parse(t).map_err(|e| alloc::format!("{e:?}")))
+    {
+        Ok(m) => m,
+        Err(e) => panic!("acpi: no usable MADT: {e}"),
+    };
+    kprintln!(
+        "madt: {} CPU(s), {} I/O APIC(s), {} source override(s), {} NMI entr(ies)",
+        madt.processors,
+        madt.ioapics.len(),
+        madt.overrides.len(),
+        madt.nmis.len()
+    );
+    if let Err(e) = apic::init(
+        &boot,
+        &madt,
+        boot.cmdline.split_whitespace().any(|t| t == "apic=x2"),
+    ) {
+        panic!("apic: {e:?}");
+    }
+    match acpi::pm_timer(&boot) {
+        Ok(pm) => time::init(&pm),
+        Err(e) => panic!("time: no ACPI PM timer to calibrate against: {e:?}"),
+    }
+    if let Err(e) = ioapic::init(&boot, &madt) {
+        panic!("ioapic: {e:?}");
+    }
 
     // Firmware services needed by the buttons.
     let acpi = match acpi::Acpi::init(&boot) {
@@ -141,9 +174,25 @@ extern "C" fn kmain() -> ! {
 
     let st = pmm::stats();
     kprintln!("pmm: {} MiB free", st.free_frames * 4 / 1024);
+    let (leaves, violations) = vmm::audit(&boot);
+    kprintln!(
+        "vmm: W^X audit after firmware setup: {leaves} leaf mappings, {violations} violations"
+    );
+    for (virt, size) in vmm::find_wx(&boot, 8) {
+        kprintln!("vmm:   writable+executable: {virt:#x} (+{size:#x})");
+    }
 
     let mut ps2 = ps2::Ps2::init();
     kprintln!("ps2: keyboard={} mouse={}", ps2.has_keyboard, ps2.has_mouse);
+    route_ps2_irqs(&madt, &mut ps2);
+
+    // Everything an interrupt handler touches is ready: let interrupts in.
+    arch::sti();
+    kprintln!("irq: interrupts enabled");
+
+    if let Some(test) = selftest::requested(boot.cmdline) {
+        selftest::run(test, &boot);
+    }
 
     let Some(fb_info) = boot.framebuffer else {
         kprintln!("no framebuffer; serial-only mode");
@@ -204,6 +253,32 @@ extern "C" fn kmain() -> ! {
             }
         }
     }
+}
+
+/// Routes the keyboard (ISA IRQ 1) and mouse (ISA IRQ 12) lines through the I/O APIC
+/// and switches the controller to interrupt-driven mode; stays in polling mode on failure.
+fn route_ps2_irqs(madt: &madt::Madt, ps2: &mut ps2::Ps2) {
+    let dest = apic::id();
+    for (irq_line, enabled) in [(1u8, ps2.has_keyboard), (12u8, ps2.has_mouse)] {
+        if !enabled {
+            continue;
+        }
+        let (gsi, polarity, trigger) = madt.isa_irq(irq_line);
+        let Some(vector) = irq::alloc_vector() else {
+            kprintln!("ps2: no free interrupt vector; staying in polling mode");
+            return;
+        };
+        irq::register(vector, ps2::irq_handler);
+        if let Err(e) = ioapic::route(gsi, vector, dest, polarity, trigger) {
+            kprintln!(
+                "ps2: cannot route IRQ {irq_line} (GSI {gsi}): {e:?}; staying in polling mode"
+            );
+            return;
+        }
+        kprintln!("ps2: IRQ {irq_line} -> GSI {gsi} -> vector {vector:#x}");
+    }
+    ps2.enable_irq();
+    kprintln!("ps2: input is interrupt-driven");
 }
 
 #[panic_handler]

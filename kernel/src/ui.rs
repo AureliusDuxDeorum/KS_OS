@@ -325,7 +325,8 @@ impl Ui {
         self.refresh_buttons();
         loop {
             let Some(ev) = ps2.poll() else {
-                core::hint::spin_loop();
+                // Sleep until the next interrupt (input or the 1 kHz tick).
+                crate::arch::enable_and_halt();
                 continue;
             };
             match ev {

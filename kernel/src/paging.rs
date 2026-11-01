@@ -329,6 +329,40 @@ impl<'a> Mapper<'a> {
         None
     }
 
+    /// Lists up to `limit` leaf mappings that are both writable and executable, as
+    /// `(virtual address, size)`.
+    pub fn find_wx(&self, root: u64, limit: usize) -> alloc::vec::Vec<(u64, u64)> {
+        fn walk(
+            m: &Mapper<'_>,
+            table: u64,
+            level: usize,
+            base: u64,
+            limit: usize,
+            out: &mut alloc::vec::Vec<(u64, u64)>,
+        ) {
+            for idx in 0..512u64 {
+                let e = m.read(table, idx as usize);
+                if e & PRESENT == 0 || out.len() >= limit {
+                    continue;
+                }
+                let mut virt = base | (idx << (12 + 9 * (level as u64 - 1)));
+                if level == 4 && idx >= 256 {
+                    virt |= 0xFFFF_0000_0000_0000; // sign-extend into the kernel half
+                }
+                if level == 1 || (e & HUGE != 0 && level <= 3) {
+                    if e & WRITABLE != 0 && e & NO_EXECUTE == 0 {
+                        out.push((virt, 4096u64 << (9 * (level as u64 - 1))));
+                    }
+                } else {
+                    walk(m, e & ADDR_MASK, level - 1, virt, limit, out);
+                }
+            }
+        }
+        let mut out = alloc::vec::Vec::new();
+        walk(self, root, 4, 0, limit, &mut out);
+        out
+    }
+
     /// Counts leaf mappings reachable from `root` and how many are both writable and executable.
     pub fn audit_wx(&self, root: u64) -> (u64, u64) {
         fn walk(m: &Mapper<'_>, table: u64, level: usize, counts: &mut (u64, u64)) {

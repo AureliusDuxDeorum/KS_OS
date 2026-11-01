@@ -5,6 +5,8 @@
 //! of IDT/APIC dependencies. USB HID is out of scope for Stage 1 (see ADR-0008).
 
 use crate::arch::{inb, outb};
+use crate::idt::TrapFrame;
+use core::sync::atomic::{AtomicU16, AtomicUsize, Ordering};
 
 const DATA: u16 = 0x60;
 const CMD: u16 = 0x64;
@@ -14,6 +16,55 @@ const ST_IN_FULL: u8 = 1 << 1;
 const ST_AUX: u8 = 1 << 5;
 
 const SPINS: u32 = 200_000;
+
+// Lock-free single-producer (IRQ handler) / single-consumer (`Ps2::poll`) byte ring.
+// Each slot holds `(from_mouse << 8) | byte`.
+const RING: usize = 128;
+static RING_BUF: [AtomicU16; RING] = [const { AtomicU16::new(0) }; RING];
+static RING_HEAD: AtomicUsize = AtomicUsize::new(0);
+static RING_TAIL: AtomicUsize = AtomicUsize::new(0);
+static IRQ_COUNT: AtomicUsize = AtomicUsize::new(0);
+
+fn ring_push(v: u16) {
+    let head = RING_HEAD.load(Ordering::Relaxed);
+    let next = (head + 1) % RING;
+    if next == RING_TAIL.load(Ordering::Acquire) {
+        return; // full: drop the byte rather than block in an interrupt handler
+    }
+    RING_BUF[head].store(v, Ordering::Relaxed);
+    RING_HEAD.store(next, Ordering::Release);
+}
+
+fn ring_pop() -> Option<u16> {
+    let tail = RING_TAIL.load(Ordering::Relaxed);
+    if tail == RING_HEAD.load(Ordering::Acquire) {
+        return None;
+    }
+    let v = RING_BUF[tail].load(Ordering::Relaxed);
+    RING_TAIL.store((tail + 1) % RING, Ordering::Release);
+    Some(v)
+}
+
+/// Number of PS/2 interrupts taken so far.
+pub fn irq_count() -> usize {
+    IRQ_COUNT.load(Ordering::Relaxed)
+}
+
+/// Interrupt handler shared by the keyboard (IRQ 1) and mouse (IRQ 12) lines:
+/// drains the controller's output buffer into the ring.
+pub fn irq_handler(_: &mut TrapFrame) {
+    IRQ_COUNT.fetch_add(1, Ordering::Relaxed);
+    for _ in 0..16 {
+        // SAFETY: reading the i8042 status and data registers.
+        let st = unsafe { inb(CMD) };
+        if st & ST_OUT_FULL == 0 {
+            break;
+        }
+        // SAFETY: output buffer is full.
+        let b = unsafe { inb(DATA) };
+        ring_push((u16::from(st & ST_AUX != 0) << 8) | u16::from(b));
+    }
+}
 
 fn wait_input_clear() -> bool {
     for _ in 0..SPINS {
@@ -122,6 +173,7 @@ pub enum Event {
 pub struct Ps2 {
     pub has_keyboard: bool,
     pub has_mouse: bool,
+    irq: bool,
     e0: bool,
     shift: bool,
     packet: [u8; 3],
@@ -134,6 +186,7 @@ impl Ps2 {
         let mut s = Self {
             has_keyboard: false,
             has_mouse: false,
+            irq: false,
             e0: false,
             shift: false,
             packet: [0; 3],
@@ -172,19 +225,39 @@ impl Ps2 {
         s
     }
 
-    /// Polls for one decoded event.
+    /// Switches the controller to interrupt-driven operation (after the IRQ lines are routed).
+    pub fn enable_irq(&mut self) {
+        flush();
+        command(0x20);
+        let cfg = read_data().unwrap_or(0x45) | 0b11; // enable keyboard and mouse IRQs
+        command(0x60);
+        write_data(cfg);
+        self.irq = true;
+    }
+
+    /// Returns one decoded event, if any input is pending.
     pub fn poll(&mut self) -> Option<Event> {
-        // SAFETY: reading the status register.
-        let st = unsafe { inb(CMD) };
-        if st & ST_OUT_FULL == 0 {
-            return None;
-        }
-        // SAFETY: output buffer full.
-        let b = unsafe { inb(DATA) };
-        if st & ST_AUX != 0 {
-            self.mouse_byte(b)
-        } else {
-            self.key_byte(b)
+        loop {
+            let (aux, b) = if self.irq {
+                let v = ring_pop()?;
+                (v >> 8 != 0, v as u8)
+            } else {
+                // SAFETY: reading the status register.
+                let st = unsafe { inb(CMD) };
+                if st & ST_OUT_FULL == 0 {
+                    return None;
+                }
+                // SAFETY: output buffer full.
+                (st & ST_AUX != 0, unsafe { inb(DATA) })
+            };
+            let ev = if aux {
+                self.mouse_byte(b)
+            } else {
+                self.key_byte(b)
+            };
+            if ev.is_some() {
+                return ev;
+            }
         }
     }
 

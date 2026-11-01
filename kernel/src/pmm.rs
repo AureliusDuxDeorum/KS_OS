@@ -6,12 +6,11 @@
 //! kernel image) stays marked in-use. Supports single frames and physically
 //! contiguous, aligned runs below an address limit (for DMA).
 //!
-//! Locking: a spin lock. Allocation from interrupt context must not happen
-//! until the lock becomes IRQ-safe (tracked in the interrupts phase).
+//! Locking: an interrupt-safe spin lock, so interrupt handlers may allocate frames.
 
 use crate::boot::BootInfo;
 use crate::limine;
-use spin::Mutex;
+use crate::sync::IrqMutex;
 
 pub const FRAME_SIZE: u64 = 4096;
 const FIRST_MANAGED: u64 = 0x10_0000; // never hand out the first MiB
@@ -28,7 +27,7 @@ struct Pmm {
 // SAFETY: the bitmap is only touched under the `PMM` lock.
 unsafe impl Send for Pmm {}
 
-static PMM: Mutex<Option<Pmm>> = Mutex::new(None);
+static PMM: IrqMutex<Option<Pmm>> = IrqMutex::new(None);
 
 /// Allocator statistics.
 #[derive(Clone, Copy, Debug)]

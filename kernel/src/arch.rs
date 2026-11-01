@@ -261,3 +261,82 @@ pub unsafe fn load_idt(idt: &DescriptorPointer) {
     // SAFETY: caller guarantees the IDT is valid.
     unsafe { asm!("lidt [{}]", in(reg) idt, options(readonly, nostack, preserves_flags)) };
 }
+
+/// Reads a 32-bit double word from an I/O port.
+///
+/// # Safety
+/// See [`outb`].
+#[inline]
+pub unsafe fn inl(port: u16) -> u32 {
+    let v: u32;
+    // SAFETY: caller guarantees the port access is valid.
+    unsafe {
+        asm!("in eax, dx", out("eax") v, in("dx") port, options(nomem, nostack, preserves_flags))
+    };
+    v
+}
+
+/// Writes a 32-bit double word to an I/O port (PCI configuration space, later phases).
+///
+/// # Safety
+/// See [`outb`].
+#[inline]
+#[allow(dead_code)]
+pub unsafe fn outl(port: u16, value: u32) {
+    // SAFETY: caller guarantees the port access is valid.
+    unsafe {
+        asm!("out dx, eax", in("dx") port, in("eax") value, options(nomem, nostack, preserves_flags))
+    };
+}
+
+/// Enables maskable interrupts.
+#[inline]
+pub fn sti() {
+    // SAFETY: setting IF is sound once the IDT and handlers are installed.
+    unsafe { asm!("sti", options(nomem, nostack)) };
+}
+
+/// Atomically enables interrupts and halts until the next one (no lost-wakeup window).
+#[inline]
+pub fn enable_and_halt() {
+    // SAFETY: `sti; hlt` executes the halt before any interrupt can be taken in between.
+    unsafe { asm!("sti", "hlt", options(nomem, nostack)) };
+}
+
+/// Returns RFLAGS.
+#[inline]
+pub fn read_rflags() -> u64 {
+    let v: u64;
+    // SAFETY: pushes and pops RFLAGS; no side effects.
+    unsafe { asm!("pushfq", "pop {}", out(reg) v, options(nomem, preserves_flags)) };
+    v
+}
+
+/// Returns true if maskable interrupts are enabled.
+#[inline]
+pub fn interrupts_enabled() -> bool {
+    read_rflags() & (1 << 9) != 0
+}
+
+/// Reads the time-stamp counter.
+#[inline]
+pub fn rdtsc() -> u64 {
+    // SAFETY: RDTSC is available on every x86_64 CPU and has no side effects.
+    unsafe { core::arch::x86_64::_rdtsc() }
+}
+
+/// CPUID leaf/sub-leaf query.
+pub fn cpuid(leaf: u32, sub: u32) -> core::arch::x86_64::CpuidResult {
+    core::arch::x86_64::__cpuid_count(leaf, sub)
+}
+
+/// Runs `f` with maskable interrupts disabled, restoring the previous state afterwards.
+pub fn without_interrupts<R>(f: impl FnOnce() -> R) -> R {
+    let were_enabled = interrupts_enabled();
+    cli();
+    let r = f();
+    if were_enabled {
+        sti();
+    }
+    r
+}
