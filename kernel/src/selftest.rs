@@ -3,13 +3,16 @@
 //! exception machinery works on real (emulated) hardware. Production images
 //! carry no command line, so none of this runs.
 
+use crate::arch;
 use crate::boot::BootInfo;
-use crate::{heap, pmm, vmm};
+use crate::madt::{self, MadtError};
+use crate::{apic, heap, irq, msi, pmm, time, vmm};
 use alloc::boxed::Box;
 use alloc::collections::BTreeMap;
 use alloc::string::String;
 use alloc::vec::Vec;
 use core::arch::asm;
+use core::sync::atomic::{AtomicU64, Ordering};
 
 /// Returns the requested self-test name, if any.
 pub fn requested(cmdline: &str) -> Option<&str> {
@@ -54,6 +57,14 @@ pub fn run(name: &str, boot: &BootInfo) {
             // SAFETY: software `int 2` runs the NMI gate (and its IST stack) like a real NMI.
             unsafe { asm!("int 2") };
             kprintln!("selftest: nmi returned");
+        }
+        "irq" => test_irq(),
+        "timer" => test_timer(),
+        "msi" => test_msi(),
+        "madt-parser" => test_madt_parser(),
+        "ps2-irq" => {
+            kprintln!("selftest: ps2 irq count {}", crate::ps2::irq_count());
+            crate::time::sleep_ms(20);
         }
         "pmm" => test_pmm(),
         "pmm-double-free" => {
@@ -293,4 +304,180 @@ fn test_layout(boot: &BootInfo) {
         "kernel stack guard page is unmapped",
     );
     kprintln!("selftest: vmm-layout ok ({leaves} leaf mappings)");
+}
+
+static IPI_COUNT: AtomicU64 = AtomicU64::new(0);
+
+fn ipi_handler(_: &mut crate::idt::TrapFrame) {
+    // Allocating (and freeing) inside an interrupt handler proves the allocator locks are IRQ-safe.
+    let b = Box::new([0xABu8; 96]);
+    let v: Vec<u8> = alloc::vec![1; 300];
+    IPI_COUNT.fetch_add(u64::from(b[0] == 0xAB && v.len() == 300), Ordering::SeqCst);
+}
+
+fn test_irq() {
+    let vector = irq::alloc_vector().expect("vector");
+    irq::register(vector, ipi_handler);
+    // 1. A self-IPI is delivered, dispatched and acknowledged.
+    apic::send_self_ipi(vector);
+    let t0 = time::now_ns();
+    while IPI_COUNT.load(Ordering::SeqCst) < 1 && time::now_ns() - t0 < 1_000_000_000 {
+        arch::enable_and_halt();
+    }
+    check(
+        IPI_COUNT.load(Ordering::SeqCst) == 1,
+        "self-IPI reaches its handler exactly once",
+    );
+    // 2. Allocation churn on the main path interleaved with interrupts that also allocate.
+    let mut sent = 1u64;
+    for i in 0..20_000u32 {
+        let b = Box::new(i);
+        let v: Vec<u32> = alloc::vec![i; 40];
+        assert!(*b == i && v[39] == i);
+        if i % 50 == 0 {
+            apic::send_self_ipi(vector);
+            sent += 1;
+        }
+    }
+    let t0 = time::now_ns();
+    while IPI_COUNT.load(Ordering::SeqCst) < sent && time::now_ns() - t0 < 1_000_000_000 {
+        arch::enable_and_halt();
+    }
+    check(
+        IPI_COUNT.load(Ordering::SeqCst) == sent,
+        "every interrupt that allocated was handled without deadlock",
+    );
+    check(
+        arch::interrupts_enabled(),
+        "interrupts are re-enabled after IRQ-safe locks are released",
+    );
+    kprintln!("selftest: irq ok ({sent} interrupts)");
+}
+
+fn test_timer() {
+    let (t0, k0) = (time::now_ns(), time::ticks());
+    time::sleep_ms(100);
+    let (dt, dk) = (time::now_ns() - t0, time::ticks() - k0);
+    check(
+        dt >= 100_000_000,
+        "sleep_ms(100) sleeps at least 100 ms by the TSC clock",
+    );
+    check(dt < 400_000_000, "sleep_ms(100) does not oversleep wildly");
+    check(
+        (70..=140).contains(&dk),
+        "the 1 kHz tick advances about 100 times in 100 ms",
+    );
+    let (a, b) = (time::now_ns(), time::now_ns());
+    check(b >= a, "the clock is monotonic");
+    kprintln!(
+        "selftest: timer ok (slept {} ms, {} ticks)",
+        dt / 1_000_000,
+        dk
+    );
+}
+
+fn test_msi() {
+    let m = msi::compose(0, 0x41).expect("compose");
+    check(
+        m.address == 0xFEE0_0000 && m.data == 0x41,
+        "MSI message for APIC 0, vector 0x41",
+    );
+    let m = msi::compose(3, 0x50).expect("compose");
+    check(
+        m.address == 0xFEE0_3000 && m.data == 0x50,
+        "MSI destination ID lands in address bits 19:12",
+    );
+    check(
+        msi::compose(255, 0x50).is_none(),
+        "APIC IDs beyond 8 bits are rejected",
+    );
+    check(
+        msi::compose(0, 0x10).is_none(),
+        "exception vectors are rejected",
+    );
+    kprintln!("selftest: msi ok");
+}
+
+fn madt_bytes(entries: &[&[u8]]) -> Vec<u8> {
+    let mut t = alloc::vec![0u8; 44];
+    t[0..4].copy_from_slice(b"APIC");
+    t[36..40].copy_from_slice(&0xFEE0_0000u32.to_le_bytes());
+    for e in entries {
+        t.extend_from_slice(e);
+    }
+    let len = t.len() as u32;
+    t[4..8].copy_from_slice(&len.to_le_bytes());
+    t
+}
+
+fn test_madt_parser() {
+    use madt::{Polarity, Trigger};
+    let cpu: &[u8] = &[0, 8, 0, 0, 1, 0, 0, 0];
+    let cpu_disabled: &[u8] = &[0, 8, 1, 1, 0, 0, 0, 0];
+    let ioapic: &[u8] = &[1, 12, 2, 0, 0x00, 0x00, 0xC0, 0xFE, 0, 0, 0, 0];
+    let iso_timer: &[u8] = &[2, 10, 0, 0, 2, 0, 0, 0, 0, 0];
+    let iso_level_low: &[u8] = &[2, 10, 0, 9, 9, 0, 0, 0, 0x0F, 0];
+    let nmi: &[u8] = &[4, 6, 0xFF, 0x00, 0x00, 1];
+    let m = madt::parse(&madt_bytes(&[
+        cpu,
+        cpu_disabled,
+        ioapic,
+        iso_timer,
+        iso_level_low,
+        nmi,
+    ]))
+    .expect("valid MADT");
+    check(m.processors == 1, "only enabled processors are counted");
+    check(
+        m.ioapics.len() == 1 && m.ioapics[0].address == 0xFEC0_0000,
+        "I/O APIC address parsed",
+    );
+    check(m.isa_irq(0).0 == 2, "ISA IRQ 0 is overridden to GSI 2");
+    let (gsi, pol, trig) = m.isa_irq(9);
+    check(
+        gsi == 9 && pol == Polarity::ActiveLow && trig == Trigger::Level,
+        "level/low override decoded",
+    );
+    check(
+        m.isa_irq(4) == (4, Polarity::ActiveHigh, Trigger::Edge),
+        "un-overridden IRQs default to ISA edge/high",
+    );
+    check(
+        m.nmis.len() == 1 && m.nmis[0].lint == 1 && m.nmis[0].processor_uid == u32::MAX,
+        "LAPIC NMI parsed (all CPUs, LINT1)",
+    );
+    // Hostile input must never panic, loop forever or read out of bounds.
+    check(
+        madt::parse(&[]) == Err(MadtError::TooShort),
+        "empty table is rejected",
+    );
+    let mut bad = madt_bytes(&[cpu]);
+    bad[0] = b'X';
+    check(
+        madt::parse(&bad) == Err(MadtError::BadSignature),
+        "wrong signature is rejected",
+    );
+    let zero_len: &[u8] = &[0, 0, 0, 0];
+    check(
+        madt::parse(&madt_bytes(&[zero_len, cpu])).is_ok(),
+        "a zero-length entry stops parsing without looping",
+    );
+    let mut truncated = madt_bytes(&[ioapic]);
+    truncated.truncate(truncated.len() - 5);
+    check(
+        madt::parse(&truncated).is_ok_and(|m| m.ioapics.is_empty()),
+        "a truncated entry is ignored",
+    );
+    let overlong: &[u8] = &[2, 250, 0, 0];
+    check(
+        madt::parse(&madt_bytes(&[overlong])).is_ok_and(|m| m.overrides.is_empty()),
+        "an entry longer than the table is ignored",
+    );
+    // Every prefix of a valid table parses without panicking.
+    let full = madt_bytes(&[cpu, ioapic, iso_timer, nmi]);
+    for n in 0..=full.len() {
+        let _ = madt::parse(&full[..n]);
+    }
+    check(true, "all truncations of a valid table parse safely");
+    kprintln!("selftest: madt-parser ok");
 }

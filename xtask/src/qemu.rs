@@ -57,6 +57,7 @@ fn base_command(
     image: &Path,
     tag: &str,
     display_none: bool,
+    extra: &[&str],
 ) -> Result<(Command, Session)> {
     let fw = find_ovmf()?;
     let dir = ctx.target_dir().join("qemu").join(tag);
@@ -85,6 +86,7 @@ fn base_command(
         .arg(format!("file:{}", serial_log.display()));
     c.arg("-monitor")
         .arg(format!("unix:{},server,nowait", monitor_sock.display()));
+    c.args(extra);
     // Developer hook: `QEMU_EXTRA="-d int -D target/qemu/int.log" cargo xtask run`.
     if let Ok(extra) = std::env::var("QEMU_EXTRA") {
         c.args(extra.split_whitespace());
@@ -114,7 +116,12 @@ impl Drop for Session {
 
 /// Starts a headless QEMU instance used by tests.
 pub fn spawn_test(ctx: &Ctx, image: &Path, tag: &str) -> Result<Session> {
-    let (mut c, mut s) = base_command(ctx, image, tag, true)?;
+    spawn_test_with(ctx, image, tag, &[])
+}
+
+/// Like [`spawn_test`] with extra QEMU arguments (e.g. `-cpu max`).
+pub fn spawn_test_with(ctx: &Ctx, image: &Path, tag: &str, extra: &[&str]) -> Result<Session> {
+    let (mut c, mut s) = base_command(ctx, image, tag, true, extra)?;
     c.stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::inherit());
@@ -127,7 +134,7 @@ pub fn spawn_test(ctx: &Ctx, image: &Path, tag: &str) -> Result<Session> {
 
 /// Runs QEMU with the serial console on stdio (interactive development).
 pub fn run_interactive(ctx: &Ctx, image: &Path, headless: bool) -> Result<()> {
-    let (mut c, mut s) = base_command(ctx, image, "run", headless)?;
+    let (mut c, mut s) = base_command(ctx, image, "run", headless, &[])?;
     let _ = s.child.wait();
     c.args(["-serial", "mon:stdio"]); // later -serial overrides the file one
     let st = c.status()?;

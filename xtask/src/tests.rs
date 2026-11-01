@@ -167,9 +167,23 @@ fn test_uefi_setup(ctx: &Ctx, image: &Path) -> Result<()> {
 
 /// Boots a self-test image and returns the serial log once `needle` appears.
 fn selftest_log(ctx: &Ctx, name: &str, needle: &str) -> Result<String> {
+    selftest_log_with(ctx, name, needle, &[])
+}
+
+fn selftest_log_with(ctx: &Ctx, name: &str, needle: &str, extra: &[&str]) -> Result<String> {
+    selftest_log_full(ctx, name, "", needle, extra)
+}
+
+fn selftest_log_full(
+    ctx: &Ctx,
+    name: &str,
+    cmdline_extra: &str,
+    needle: &str,
+    extra: &[&str],
+) -> Result<String> {
     let img = ctx.target_dir().join(format!("ks_os-selftest-{name}.img"));
-    crate::write_image(ctx, &format!("selftest={name}"), &img)?;
-    let s = qemu::spawn_test(ctx, &img, &format!("t-selftest-{name}"))?;
+    crate::write_image(ctx, &format!("selftest={name} {cmdline_extra}"), &img)?;
+    let s = qemu::spawn_test_with(ctx, &img, &format!("t-selftest-{name}"), extra)?;
     let r = wait_for(&s, needle, Duration::from_secs(60));
     let log = serial(&s);
     drop(s);
@@ -290,10 +304,56 @@ fn test_memory_violations(ctx: &Ctx, _image: &Path) -> Result<()> {
     Ok(())
 }
 
+fn test_interrupts(ctx: &Ctx, _image: &Path) -> Result<()> {
+    for (name, needle) in [
+        ("irq", "selftest: irq ok"),
+        ("timer", "selftest: timer ok"),
+        ("msi", "selftest: msi ok"),
+        ("madt-parser", "selftest: madt-parser ok"),
+    ] {
+        let log = selftest_log(ctx, name, needle)?;
+        expect_all(&log, name, &["apic: xAPIC enabled", "ioapic:", "time: TSC"])?;
+        if log.contains("selftest FAILED") {
+            return Err(format!("selftest `{name}` reported a failure:\n{log}").into());
+        }
+    }
+    println!("ok   xAPIC, calibrated timer, IRQ-safe allocation under interrupts, MSI composition, MADT parser");
+    Ok(())
+}
+
+fn test_x2apic(ctx: &Ctx, _image: &Path) -> Result<()> {
+    // QEMU's software emulation (TCG) has no x2APIC; this needs hardware virtualisation.
+    if !Path::new("/dev/kvm").exists() {
+        println!("skip x2APIC mode test (needs /dev/kvm; the x2APIC path is untested in this environment)");
+        return Ok(());
+    }
+    let log = selftest_log_full(
+        ctx,
+        "irq",
+        "apic=x2",
+        "selftest: irq ok",
+        &["-enable-kvm", "-cpu", "host"],
+    )?;
+    expect_all(&log, "irq(x2apic)", &["apic: x2APIC enabled"])?;
+    println!("ok   x2APIC mode works the same (interrupt delivery, EOI, self-IPI)");
+    Ok(())
+}
+
+fn test_nmi_real(ctx: &Ctx, image: &Path) -> Result<()> {
+    let s = boot(ctx, image, "t-nmi-real")?;
+    monitor(&s, "nmi")?;
+    wait_for(&s, "exception: NMI", Duration::from_secs(10))?;
+    // The kernel keeps running and still takes input interrupts afterwards.
+    monitor(&s, "sendkey p")?;
+    wait_for(&s, "action: power off", Duration::from_secs(10))?;
+    println!("ok   a real NMI (QEMU `nmi`) is delivered through the LAPIC and survived");
+    Ok(())
+}
+
 pub fn run_all(ctx: &Ctx, image: &Path) -> Result<()> {
     let mut failed = 0;
     type TestFn = fn(&Ctx, &Path) -> Result<()>;
-    let tests: [(&str, TestFn); 10] = [
+    let tests: [(&str, TestFn); 13] = [
         ("boot", test_boot_banner),
         ("poweroff-key", test_power_off_key),
         ("poweroff-mouse", test_power_off_mouse),
@@ -302,6 +362,9 @@ pub fn run_all(ctx: &Ctx, image: &Path) -> Result<()> {
         ("exception-fatal", test_fatal_exceptions),
         ("stack-overflow", test_stack_overflow),
         ("nmi", test_nmi),
+        ("interrupts", test_interrupts),
+        ("x2apic", test_x2apic),
+        ("nmi-real", test_nmi_real),
         ("memory", test_memory_selftests),
         ("memory-violations", test_memory_violations),
     ];
