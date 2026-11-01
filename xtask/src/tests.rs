@@ -330,6 +330,126 @@ const PCI_DEVICES: &[&str] = &[
     "virtio-net-pci,disable-legacy=on",
 ];
 
+/// USB topology under test: keyboard, mouse, a hub with a keyboard behind it (no PS/2 controller,
+/// so injected input can only reach the USB devices).
+const USB_DEVICES: &[&str] = &[
+    "-machine",
+    "q35,i8042=off",
+    "-device",
+    "qemu-xhci,id=xhci",
+    "-device",
+    "usb-kbd,bus=xhci.0",
+    "-device",
+    "usb-mouse,bus=xhci.0",
+    "-device",
+    "usb-hub,bus=xhci.0,port=3",
+    "-device",
+    "usb-kbd,bus=xhci.0,port=3.1",
+];
+
+fn usb_disk(ctx: &Ctx) -> Result<std::path::PathBuf> {
+    let path = ctx.target_dir().join("usb-test-disk.img");
+    let mut disk = vec![0u8; 1 << 20];
+    disk[..17].copy_from_slice(b"KSOS-USB-BOT-TEST");
+    for (i, b) in disk.iter_mut().enumerate().take(512).skip(17) {
+        *b = (i as u8).wrapping_mul(3);
+    }
+    std::fs::write(&path, disk)?;
+    Ok(path)
+}
+
+fn test_usb_enumeration(ctx: &Ctx, _image: &Path) -> Result<()> {
+    let log = selftest_log_with(ctx, "usb", "selftest: usb ok", USB_DEVICES)?;
+    expect_all(
+        &log,
+        "usb",
+        &[
+            "xhci0: MSI-X on vector",
+            "ps2: no controller or devices present",
+            "usb: HID keyboard bound",
+            "usb: HID pointer bound",
+            "usb: hub on slot",
+            "behind hub slot",
+            "4 device(s) enumerated",
+        ],
+    )?;
+    println!("ok   xHCI: MSI-X, enumeration, hub with a device behind it, HID binding (and a machine with no PS/2)");
+    Ok(())
+}
+
+fn test_usb_hid(ctx: &Ctx, _image: &Path) -> Result<()> {
+    let img = ctx.target_dir().join("ks_os-selftest-usb-hid.img");
+    crate::write_image(ctx, "selftest=usb-hid", &img)?;
+    let s = qemu::spawn_test_with(ctx, &img, "t-selftest-usb-hid", USB_DEVICES)?;
+    wait_for(&s, "selftest: usb-hid ready", Duration::from_secs(60))?;
+    monitor(&s, "sendkey p")?;
+    monitor(&s, "mouse_move 12 7")?;
+    let r = wait_for(&s, "selftest: usb-hid ok", Duration::from_secs(30));
+    let log = serial(&s);
+    drop(s);
+    let _ = std::fs::remove_file(&img);
+    r.map_err(|_| format!("USB HID input never arrived; log:\n{log}"))?;
+    println!("ok   USB keyboard and mouse input travels interrupt endpoint -> report parser -> input queue");
+    Ok(())
+}
+
+fn boot_usb_ui(ctx: &Ctx, image: &Path, tag: &str) -> Result<Session> {
+    let s = qemu::spawn_test_with(ctx, image, tag, USB_DEVICES)?;
+    wait_for(&s, "ui: ready", Duration::from_secs(60))?;
+    Ok(s)
+}
+
+fn test_usb_ui(ctx: &Ctx, image: &Path) -> Result<()> {
+    // Keyboard: the `P` accelerator powers the machine off.
+    let mut s = boot_usb_ui(ctx, image, "t-usb-ui-key")?;
+    monitor(&s, "sendkey p")?;
+    wait_for(&s, "action: power off", Duration::from_secs(10))?;
+    if !wait_exit(&mut s, Duration::from_secs(20))? {
+        return Err("QEMU did not power off after a USB keyboard press".into());
+    }
+    // Mouse: move onto the Power off button and click.
+    let mut s = boot_usb_ui(ctx, image, "t-usb-ui-mouse")?;
+    let log = serial(&s);
+    let (x, y, w, h) = parse_rect(&log, "PowerOff").ok_or("no power-off button rect on serial")?;
+    let (cx, cy) = parse_cursor(&log).ok_or("no cursor start on serial")?;
+    let (mut dx, mut dy) = (x + w / 2 - cx, y + h / 2 - cy);
+    while dx != 0 || dy != 0 {
+        let (sx, sy) = (dx.clamp(-100, 100), dy.clamp(-100, 100));
+        monitor(&s, &format!("mouse_move {sx} {sy}"))?;
+        dx -= sx;
+        dy -= sy;
+    }
+    monitor(&s, "mouse_button 1")?;
+    monitor(&s, "mouse_button 0")?;
+    wait_for(&s, "action: power off", Duration::from_secs(10))?;
+    if !wait_exit(&mut s, Duration::from_secs(20))? {
+        return Err("QEMU did not power off after a USB mouse click".into());
+    }
+    println!(
+        "ok   the real UI is operable from a USB keyboard and mouse on a machine with no PS/2"
+    );
+    Ok(())
+}
+
+fn test_usb_bulk(ctx: &Ctx, _image: &Path) -> Result<()> {
+    let disk = usb_disk(ctx)?;
+    let drive = format!("if=none,id=usbdisk,file={},format=raw", disk.display());
+    let extra: Vec<&str> = vec![
+        "-device",
+        "qemu-xhci,id=xhci",
+        "-drive",
+        &drive,
+        "-device",
+        "usb-storage,bus=xhci.0,drive=usbdisk",
+    ];
+    let log = selftest_log_with(ctx, "usb-bot", "selftest: usb-bot ok", &extra)?;
+    if log.contains("selftest FAILED") {
+        return Err(format!("usb-bot reported a failure:\n{log}").into());
+    }
+    println!("ok   USB bulk-only mass storage: CBW out, 512-byte data stage in, CSW in (bulk endpoints work)");
+    Ok(())
+}
+
 fn test_ksparse_host(ctx: &Ctx, _image: &Path) -> Result<()> {
     let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".into());
     let out = std::process::Command::new(cargo)
@@ -407,7 +527,7 @@ fn test_nmi_real(ctx: &Ctx, image: &Path) -> Result<()> {
 pub fn run_all(ctx: &Ctx, image: &Path) -> Result<()> {
     let mut failed = 0;
     type TestFn = fn(&Ctx, &Path) -> Result<()>;
-    let tests: [(&str, TestFn); 16] = [
+    let tests: [(&str, TestFn); 20] = [
         ("ksparse", test_ksparse_host),
         ("boot", test_boot_banner),
         ("poweroff-key", test_power_off_key),
@@ -420,6 +540,10 @@ pub fn run_all(ctx: &Ctx, image: &Path) -> Result<()> {
         ("interrupts", test_interrupts),
         ("pci", test_pci),
         ("pci-msi", test_pci_msi),
+        ("usb", test_usb_enumeration),
+        ("usb-hid", test_usb_hid),
+        ("usb-ui", test_usb_ui),
+        ("usb-bulk", test_usb_bulk),
         ("x2apic", test_x2apic),
         ("nmi-real", test_nmi_real),
         ("memory", test_memory_selftests),
