@@ -17,3 +17,5 @@ Process: [ADR-0001](0001-record-architecture-decisions.md). Template: [template.
 | [0011](0011-ps2-polling-input.md) | PS/2 polling input for Stage 1 | Accepted |
 | [0012](0012-limine-pin-and-base-revision.md) | Limine v11 pinned by commit and checksum; base revision 5 | Accepted |
 | [0013](0013-stage-2-scope.md) | Stage 2 scope: Bluetooth input and wired LAN internet | Accepted |
+| [0014](0014-exception-handling-and-stacks.md) | CPU exception handling, IST stacks and guard-paged kernel stacks | Accepted |
+| [0015](0015-placeholder-monochrome-ui.md) | Placeholder monochrome UI | Accepted (provisional) |

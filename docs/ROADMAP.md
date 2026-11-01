@@ -19,7 +19,8 @@ Each stage ends with a **Hardening gate** ([ADR-0002](adr/0002-staged-developmen
 ## Stage 2 — Bluetooth input and LAN internet ([ADR-0013](adr/0013-stage-2-scope.md))
 Target hardware: Intel I225-V NIC, USB Bluetooth controller (Realtek/MediaTek/Broadcom/Qualcomm), Classic + BLE HID peripherals.
 
-- ☐ S2.P1 Exceptions & CPU — GDT/TSS/IST, IDT, fault logging, guard-paged kernel stacks *(closes R2, R3)*
+- ☑ S2.P1 Exceptions & CPU — GDT/TSS/IST, IDT, fault logging, guard-paged kernel stacks *(closes R2, R3; [ADR-0014](adr/0014-exception-handling-and-stacks.md))*
+- ☑ S2.P0 Monochrome placeholder UI ([ADR-0015](adr/0015-placeholder-monochrome-ui.md))
 - ☐ S2.P2 Memory — frame allocator, kernel-owned page tables (drop bootloader tables), heap, DMA allocator
 - ☐ S2.P3 Interrupts & time — LAPIC/IOAPIC, timer, MSI/MSI-X, interrupt-driven PS/2
 - ☐ S2.P4 ACPI & PCI — host-testable fuzzed table parsers *(closes R9)*, ECAM enumeration, AML decision *(R7)*

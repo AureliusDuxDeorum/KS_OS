@@ -47,6 +47,7 @@ All `unsafe` blocks carry a `// SAFETY:` justification; this is enforced by
 | `strbuf.rs` | `from_utf8_unchecked` over bytes only appended on char boundaries |
 
 ## 4. Mitigation review
+*(State at the time of review; R2 and R3 have since been resolved, see §5.)*
 
 | Mitigation | State |
 | --- | --- |
@@ -66,8 +67,8 @@ All `unsafe` blocks carry a `// SAFETY:` justification; this is enforced by
 | ID | Risk | Action | Blocking Stage 2? |
 | --- | --- | --- | --- |
 | R1 | Runtime code RWX on firmware without a Memory Attributes Table | Keep reporting at boot; consider refusing runtime services unless `strict_wx` | no |
-| R2 | No stack guard pages | Own kernel stacks with guard pages in the memory-manager phase | no |
-| R3 | No IDT: faults reset the machine silently | First Stage 2 phase: GDT/TSS/IDT with IST stacks, fault logging | **yes** |
+| R2 | No stack guard pages | **RESOLVED 2026-11-01** (S2.P1, ADR-0014): guard-paged kernel and IST stacks, overflow test in CI | no |
+| R3 | No IDT: faults reset the machine silently | **RESOLVED 2026-11-01** (S2.P1, ADR-0014): IDT, IST stacks, fatal diagnostics, fault self-tests | ~~yes~~ no |
 | R4 | No KASLR | Evaluate with relocatable kernel in Stage 2/3 | no |
 | R5 | No compiler-level CFI/stack-protector | Re-evaluate toolchain options at gate G2 | no |
 | R6 | PS/2-only input (USB-only machines cannot press the buttons) | USB HID driver in Stage 5; interrupt-driven PS/2 in Stage 2 | no |
@@ -78,5 +79,5 @@ All `unsafe` blocks carry a `// SAFETY:` justification; this is enforced by
 ## 6. Decision
 Waiver recorded in [ADR-0013](../adr/0013-stage-2-scope.md): Stage 2 may start; R3, R8, R9 are rescheduled into Stage 2 phases and Gate G2 cannot close while they are open.
 
-Gate **not yet closed**. To close: resolve R3, R8 and R9 (or accept a waiver ADR),
+Gate **not yet closed**. To close: resolve R8 and R9 (R3 done) (or accept a waiver ADR),
 then change **Status** to CLOSED and update `docs/ROADMAP.md`.
