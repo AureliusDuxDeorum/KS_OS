@@ -1,5 +1,7 @@
 # Roadmap
 
+**End goal ([ADR-0022](adr/0022-project-vision-and-end-goal.md)):** a fully capable OS comparable to Ubuntu in polish, cybercore monochrome KS-branded design, Arch-like access. **The project stays open until that is reached.**
+
 Legend: ☐ not started · ◐ in progress · ☑ done. IDs: `S<stage>.P<phase>.<step>`.
 Each stage ends with a **Hardening gate** ([ADR-0002](adr/0002-staged-development-process.md)).
 
@@ -30,7 +32,11 @@ Target hardware: Intel I225-V NIC, USB Bluetooth controller (Realtek/MediaTek/Br
 - ☐ S2.P8 Integration — Bluetooth/network status and pairing screen in the UI, automated + hardware-in-the-loop tests
 - ☐ **Gate G2:** hardening review (cannot close while G1 items R3, R8, R9 are open)
 
-## Later stages (outline only; to be re-planned after Gate G2)
-- Stage 3: Threads, scheduler, user mode, syscalls
-- Stage 4: Capabilities and IPC
-- Stage 5: Userspace services and driver isolation, storage, TLS
+## Later stages (outline only — revised before each stage starts, see ADR-0022 open questions)
+- Stage 3: Threads, scheduler, user mode, syscalls, ELF loader
+- Stage 4: Capabilities and IPC, service model, driver isolation
+- Stage 5: Storage: block layer, VFS, filesystems, boot/update integrity
+- Stage 6: Graphics: GPU path, compositor, fonts/text, input stack
+- Stage 7: Userland: libc/POSIX strategy, toolchain, package manager, self-hosting
+- Stage 8: Desktop: shell, applications, audio, Wi-Fi, power/suspend, installer
+- Stage 9+: Hardware coverage, hardening, polish, updates — until the end goal is met
