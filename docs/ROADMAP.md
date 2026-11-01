@@ -24,8 +24,8 @@ Target hardware: Intel I225-V NIC, USB Bluetooth controller (Realtek/MediaTek/Br
 - ☐ S2.P2 Memory — frame allocator, kernel-owned page tables (drop bootloader tables), heap, DMA allocator
 - ☐ S2.P3 Interrupts & time — LAPIC/IOAPIC, timer, MSI/MSI-X, interrupt-driven PS/2
 - ☐ S2.P4 ACPI & PCI — host-testable fuzzed table parsers *(closes R9)*, ECAM enumeration, AML decision *(R7)*
-- ☐ S2.P5 USB xHCI — controller, enumeration, hubs, HID boot keyboards/mice *(R6 for wired)*
-- ☐ S2.P6 Bluetooth — USB HCI transport, vendor firmware loader, L2CAP/SDP, SSP pairing, Classic HID, then LE (SMP, ATT/GATT, HOGP), bond handling, unified input events
+- ☐ S2.P5 USB xHCI — controller, enumeration, hubs, USB HID with full report-descriptor parser *(makes the buttons usable on the owner's machine via the Corsair receiver / cabled keyboard; R6; [ADR-0016](adr/0016-target-hardware-inventory.md))*
+- ☐ S2.P6 Bluetooth — USB HCI transport, vendor firmware loaders (ASUS BT500 first, then internal MediaTek MT79xx), L2CAP/SDP, SSP pairing, Classic HID, then LE (SMP, ATT/GATT, HOGP), bond handling, unified input events
 - ☐ S2.P7 Networking — `igc` (I225-V) driver, Ethernet, smoltcp, DHCP, DNS, ICMP, TCP; virtio-net/e1000e for CI
 - ☐ S2.P8 Integration — Bluetooth/network status and pairing screen in the UI, automated + hardware-in-the-loop tests
 - ☐ **Gate G2:** hardening review (cannot close while G1 items R3, R8, R9 are open)

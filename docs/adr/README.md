@@ -19,3 +19,4 @@ Process: [ADR-0001](0001-record-architecture-decisions.md). Template: [template.
 | [0013](0013-stage-2-scope.md) | Stage 2 scope: Bluetooth input and wired LAN internet | Accepted |
 | [0014](0014-exception-handling-and-stacks.md) | CPU exception handling, IST stacks and guard-paged kernel stacks | Accepted |
 | [0015](0015-placeholder-monochrome-ui.md) | Placeholder monochrome UI | Accepted (provisional) |
+| [0016](0016-target-hardware-inventory.md) | Target hardware inventory and input/Bluetooth priorities | Accepted |
