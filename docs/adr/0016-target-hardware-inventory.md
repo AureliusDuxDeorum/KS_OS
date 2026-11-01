@@ -1,6 +1,6 @@
 # ADR-0016: Target hardware inventory and input/Bluetooth priorities
 
-- **Status:** Accepted
+- **Status:** Accepted; ordering of decisions 1–2 superseded in part by [ADR-0017](0017-bluetooth-first-internal-controller.md)
 - **Date:** 2026-11-01
 - **Deciders:** Project owner, Claude
 - **Supplements:** [ADR-0013](0013-stage-2-scope.md)

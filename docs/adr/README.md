@@ -20,3 +20,4 @@ Process: [ADR-0001](0001-record-architecture-decisions.md). Template: [template.
 | [0014](0014-exception-handling-and-stacks.md) | CPU exception handling, IST stacks and guard-paged kernel stacks | Accepted |
 | [0015](0015-placeholder-monochrome-ui.md) | Placeholder monochrome UI | Accepted (provisional) |
 | [0016](0016-target-hardware-inventory.md) | Target hardware inventory and input/Bluetooth priorities | Accepted |
+| [0017](0017-bluetooth-first-internal-controller.md) | Bluetooth is the primary input path; internal MediaTek controller first | Accepted |
