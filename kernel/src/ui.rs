@@ -8,12 +8,14 @@ use crate::ps2::{Event, Key, Ps2};
 use crate::strbuf::StrBuf;
 use core::fmt::Write;
 
-const BG: Color = Color(0x0B, 0x10, 0x20);
-const FG: Color = Color(0xE6, 0xED, 0xF3);
-const DIM: Color = Color(0x8B, 0x94, 0x9E);
-const OK: Color = Color(0x3F, 0xB9, 0x50);
-const WARN: Color = Color(0xF0, 0xB4, 0x29);
-const ERR: Color = Color(0xF8, 0x51, 0x49);
+// Placeholder monochrome palette (black / white / gray); the real design language comes later.
+const BLACK: Color = Color(0x00, 0x00, 0x00);
+const WHITE: Color = Color(0xFF, 0xFF, 0xFF);
+const GRAY_LIGHT: Color = Color(0xC8, 0xC8, 0xC8);
+const GRAY_MID: Color = Color(0x8A, 0x8A, 0x8A);
+const GRAY_DARK: Color = Color(0x3A, 0x3A, 0x3A);
+const GRAY_DEEP: Color = Color(0x14, 0x14, 0x14);
+const GRAY_HOVER: Color = Color(0x2A, 0x2A, 0x2A);
 
 /// What the user asked for.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -25,7 +27,6 @@ pub enum Action {
 struct Button {
     label: &'static str,
     action: Action,
-    accent: Color,
     enabled: bool,
 }
 
@@ -91,13 +92,11 @@ impl Ui {
             Button {
                 label: "Power off",
                 action: Action::PowerOff,
-                accent: Color(0xC6, 0x36, 0x2F),
                 enabled: true,
             },
             Button {
                 label: "Boot into UEFI",
                 action: Action::BootToFirmware,
-                accent: Color(0x2F, 0x6F, 0xDB),
                 enabled: firmware_setup_available,
             },
         ];
@@ -170,53 +169,39 @@ impl Ui {
     pub fn draw_all(&mut self, info: &str) {
         self.hide_cursor();
         let (w, h, s) = (self.fb.width as i32, self.fb.height as i32, self.scale);
-        self.fb.fill_rect(0, 0, w, h, BG);
-        self.fb.draw_text_centered(h / 5, "OS operating", 2 * s, OK);
-        self.fb.draw_text_centered(h / 5 + 22 * s, info, s, DIM);
+        self.fb.fill_rect(0, 0, w, h, BLACK);
+        self.fb
+            .draw_text_centered(h / 5, "OS operating", 2 * s, WHITE);
+        self.fb
+            .draw_text_centered(h / 5 + 22 * s, info, s, GRAY_MID);
         let hint = if self.has_mouse {
             "Click a button, or Tab / arrows + Enter.  P = power off, U = UEFI setup"
         } else {
             "Tab / arrows + Enter.  P = power off, U = UEFI setup"
         };
         self.fb
-            .draw_text_centered(h - 14 * s, hint, (s / 2).max(1), DIM);
+            .draw_text_centered(h - 14 * s, hint, (s / 2).max(1), GRAY_MID);
         for i in 0..self.buttons.len() {
             self.draw_button(i);
         }
         self.show_cursor();
     }
 
+    /// Returns `(fill, border, text)` for button `i` in its current state.
     fn state_color(&self, i: usize) -> (Color, Color, Color) {
-        // (fill, border, text)
-        let b = &self.buttons[i];
-        if !b.enabled {
-            return (
-                Color(0x1C, 0x21, 0x28),
-                Color(0x30, 0x36, 0x3D),
-                Color(0x6E, 0x76, 0x81),
-            );
+        if !self.buttons[i].enabled {
+            return (BLACK, GRAY_DARK, GRAY_DARK);
         }
         let pressed = self.pressed == Some(i) && self.left_down;
-        let lift = |c: Color, d: i16| {
-            Color(
-                (i16::from(c.0) + d).clamp(0, 255) as u8,
-                (i16::from(c.1) + d).clamp(0, 255) as u8,
-                (i16::from(c.2) + d).clamp(0, 255) as u8,
-            )
-        };
-        let fill = if pressed {
-            lift(b.accent, -40)
+        let border = if self.focus == i { WHITE } else { GRAY_MID };
+        if pressed {
+            // Inverted while the mouse button is held.
+            (WHITE, WHITE, BLACK)
         } else if self.hover == Some(i) {
-            lift(b.accent, 30)
+            (GRAY_HOVER, border, WHITE)
         } else {
-            b.accent
-        };
-        let border = if self.focus == i {
-            Color(0xFF, 0xFF, 0xFF)
-        } else {
-            lift(b.accent, -30)
-        };
-        (fill, border, Color(0xFF, 0xFF, 0xFF))
+            (GRAY_DEEP, border, GRAY_LIGHT)
+        }
     }
 
     fn draw_button(&mut self, i: usize) {
@@ -224,8 +209,18 @@ impl Ui {
         let (fill, border, text) = self.state_color(i);
         let s = self.scale;
         self.fb.fill_rect(r.x, r.y, r.w, r.h, fill);
-        self.fb
-            .stroke_rect(r.x, r.y, r.w, r.h, (s / 2).max(1) + 1, border);
+        self.fb.stroke_rect(
+            r.x,
+            r.y,
+            r.w,
+            r.h,
+            if self.focus == i {
+                (s / 2).max(1) + 2
+            } else {
+                (s / 2).max(1)
+            },
+            border,
+        );
         let label = self.buttons[i].label;
         let tw = Fb::text_width(label, s);
         self.fb.draw_text(
@@ -243,13 +238,26 @@ impl Ui {
         let s = self.scale;
         let line_h = 8 * s + 4;
         self.fb
-            .fill_rect(0, self.status_y, self.fb.width as i32, line_h, BG);
-        let color = match level {
-            Level::Info => FG,
-            Level::Warn => WARN,
-            Level::Error => ERR,
-        };
-        self.fb.draw_text_centered(self.status_y, msg, s, color);
+            .fill_rect(0, self.status_y, self.fb.width as i32, line_h, BLACK);
+        // Severity is conveyed by form, not colour: plain, prefixed, or inverted.
+        match level {
+            Level::Info => self.fb.draw_text_centered(self.status_y, msg, s, WHITE),
+            Level::Warn => {
+                let mut line = StrBuf::<96>::new();
+                let _ = write!(line, "! {msg}");
+                self.fb
+                    .draw_text_centered(self.status_y, line.as_str(), s, GRAY_LIGHT);
+            }
+            Level::Error => {
+                let mut line = StrBuf::<96>::new();
+                let _ = write!(line, " ERROR: {msg} ");
+                let w = Fb::text_width(line.as_str(), s);
+                let x = (self.fb.width as i32 - w) / 2;
+                self.fb.fill_rect(x, self.status_y, w, line_h, WHITE);
+                self.fb
+                    .draw_text(x, self.status_y + 2, line.as_str(), s, BLACK);
+            }
+        }
         self.show_cursor();
     }
 
