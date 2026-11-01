@@ -1,7 +1,7 @@
 //! Entry points shared by the host robustness tests and the fuzz targets.
 
 use crate::pci::{self, Config};
-use crate::{efi, madt, mcfg, sdt};
+use crate::{efi, hid, madt, mcfg, sdt, usb};
 
 /// Drives every parser with the same arbitrary bytes. Used by the robustness tests and the
 /// libFuzzer targets; the contract is simply "must return".
@@ -35,7 +35,31 @@ pub fn exercise(bytes: &[u8]) {
     let _ = efi::mat_total_len(bytes);
     let _ = efi::parse_mat(bytes);
     let _ = efi::find_config_table(bytes, &efi::MAT_GUID);
-    let words: alloc::vec::Vec<u32> = (0..12).map(|i| Config::read32(bytes, (i * 4) as u16)).collect();
+    let _ = usb::parse_device(bytes);
+    let _ = usb::parse_hub(bytes);
+    if let Some(cfg) = usb::parse_config(bytes) {
+        for i in &cfg.interfaces {
+            for e in &i.endpoints {
+                let _ = (e.dci(), e.kind(), e.number(), e.is_in());
+            }
+        }
+    }
+    let desc = hid::parse(bytes);
+    let _ = (hid::is_keyboard(&desc), hid::is_pointer(&desc));
+    for id in [0u8, 1, 0xFF] {
+        let _ = hid::input_report_len(&desc, id);
+    }
+    // Reuse the same bytes as a report against the parsed descriptor and a known-good one.
+    let _ = hid::interpret(&desc, bytes);
+    let _ = hid::extract(
+        bytes,
+        bytes.first().copied().unwrap_or(0).into(),
+        bytes.get(1).copied().unwrap_or(8),
+        true,
+    );
+    let words: alloc::vec::Vec<u32> = (0..12)
+        .map(|i| Config::read32(bytes, (i * 4) as u16))
+        .collect();
     for i in 0..6 {
         let _ = pci::decode_bar(&words[..6], &words[6..], i);
     }

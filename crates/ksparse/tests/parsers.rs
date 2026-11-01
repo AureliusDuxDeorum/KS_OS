@@ -317,3 +317,185 @@ fn efi_config_tables_and_mat() {
     hostile[4..8].copy_from_slice(&u32::MAX.to_le_bytes());
     assert_eq!(efi::mat_total_len(&hostile), None);
 }
+
+#[test]
+fn usb_device_and_config() {
+    use ksparse::usb::{self, TransferKind};
+    let mut dev = vec![0u8; 18];
+    dev[0] = 18;
+    dev[1] = 1;
+    dev[2..4].copy_from_slice(&0x0200u16.to_le_bytes());
+    dev[7] = 64;
+    dev[8..10].copy_from_slice(&0x0e8du16.to_le_bytes());
+    dev[10..12].copy_from_slice(&0x0608u16.to_le_bytes());
+    dev[17] = 1;
+    let d = usb::parse_device(&dev).unwrap();
+    assert_eq!(
+        (d.vendor, d.product, d.max_packet0, d.num_configs),
+        (0x0e8d, 0x0608, 64, 1)
+    );
+    assert!(usb::parse_device(&dev[..17]).is_none());
+    let cfg = usb::parse_config(&sample_usb_config()).unwrap();
+    assert_eq!(cfg.value, 1);
+    assert_eq!(cfg.interfaces.len(), 1);
+    let i = &cfg.interfaces[0];
+    assert_eq!(
+        (i.class, i.subclass, i.protocol, i.hid_report_len),
+        (3, 1, 1, Some(63))
+    );
+    let e = i.endpoints[0];
+    assert_eq!(
+        (
+            e.number(),
+            e.is_in(),
+            e.kind(),
+            e.max_packet,
+            e.interval,
+            e.dci()
+        ),
+        (1, true, TransferKind::Interrupt, 8, 10, 3)
+    );
+    // Truncations and a zero-length descriptor are survived.
+    let full = sample_usb_config();
+    for n in 0..=full.len() {
+        let _ = usb::parse_config(&full[..n]);
+    }
+    let mut zero = full.clone();
+    zero[9] = 0;
+    assert!(usb::parse_config(&zero).is_some());
+}
+
+#[test]
+fn usb_setup_packet_and_hub() {
+    use ksparse::usb::{self, Setup};
+    let s = Setup::get_descriptor(usb::DT_DEVICE, 0, 18);
+    assert_eq!(s.to_u64(), 0x0012_0000_0100_0680);
+    assert!(s.is_in());
+    assert!(!Setup::set_configuration(1).is_in());
+    assert_eq!(
+        usb::parse_hub(&[9, 0x29, 4, 0x09, 0x00, 50, 100, 0, 0xFF])
+            .unwrap()
+            .ports,
+        4
+    );
+    assert!(usb::parse_hub(&[9, 0x29, 0, 0, 0, 0, 0]).is_none());
+    let st = usb::HubPortStatus::from_raw(0x0001_0103);
+    assert!(st.connected && st.enabled && st.power && st.connect_changed && !st.low_speed);
+}
+
+#[test]
+fn hid_boot_keyboard() {
+    use ksparse::hid;
+    let d = hid::parse(BOOT_KEYBOARD_DESC);
+    assert!(hid::is_keyboard(&d) && !hid::is_pointer(&d));
+    assert!(!d.uses_report_ids);
+    assert_eq!(hid::input_report_len(&d, 0), 8);
+    let r = hid::interpret(&d, &[0x02, 0x00, 0x13, 0x28, 0, 0, 0, 0]);
+    assert_eq!(r.modifiers, 0x02);
+    assert_eq!(r.keys, vec![0x13, 0x28]);
+    let none = hid::interpret(&d, &[0; 8]);
+    assert!(none.keys.is_empty() && none.modifiers == 0);
+    // A short report is handled without panicking.
+    let _ = hid::interpret(&d, &[0x01]);
+}
+
+#[test]
+fn hid_boot_mouse() {
+    use ksparse::hid;
+    let d = hid::parse(BOOT_MOUSE_DESC);
+    assert!(hid::is_pointer(&d) && !hid::is_keyboard(&d));
+    let r = hid::interpret(&d, &[0x05, 0x05, 0xFB, 0x01]);
+    assert_eq!(r.buttons, 0b101);
+    assert_eq!((r.dx, r.dy, r.wheel), (5, -5, 1));
+}
+
+#[test]
+fn hid_report_ids_and_extraction() {
+    use ksparse::hid;
+    // Two reports: id 1 with 16-bit X, id 2 with an 8-bit Y.
+    let desc = [
+        0x05, 0x01, 0x09, 0x02, 0xA1, 0x01, 0x85, 0x01, 0x09, 0x30, 0x16, 0x00, 0x80, 0x26, 0xFF,
+        0x7F, 0x75, 0x10, 0x95, 0x01, 0x81, 0x06, 0x85, 0x02, 0x09, 0x31, 0x15, 0x81, 0x25, 0x7F,
+        0x75, 0x08, 0x95, 0x01, 0x81, 0x06, 0xC0,
+    ];
+    let d = hid::parse(&desc);
+    assert!(d.uses_report_ids);
+    assert_eq!(hid::interpret(&d, &[1, 0x00, 0xFF]).dx, -256);
+    assert_eq!(hid::interpret(&d, &[2, 0xF0]).dy, -16);
+    assert_eq!(
+        hid::interpret(&d, &[3, 0xF0]).dy,
+        0,
+        "unknown report id is ignored"
+    );
+    assert_eq!(hid::extract(&[0b1010_0101], 0, 4, false), Some(5));
+    assert_eq!(hid::extract(&[0b1010_0101], 4, 4, true), Some(-6));
+    assert_eq!(
+        hid::extract(&[0xFF], 4, 8, false),
+        None,
+        "reads past the end are refused"
+    );
+    assert_eq!(hid::extract(&[0xFF; 8], u32::MAX, 8, false), None);
+    assert_eq!(hid::extract(&[0xFF], 0, 0, false), None);
+}
+
+#[test]
+fn hid_hostile_descriptors_are_bounded() {
+    use ksparse::hid;
+    // Huge report size * count, deep push stacks, endless collections and long items.
+    let mut hostile = vec![0x75, 0xFF, 0x96, 0xFF, 0xFF, 0x81, 0x02];
+    hostile.extend(std::iter::repeat_n([0xA1u8, 0x01], 5000).flatten());
+    hostile.extend(std::iter::repeat_n(0xA4u8, 5000));
+    hostile.extend_from_slice(&[0xFE, 0xFF, 0x00]);
+    let d = hid::parse(&hostile);
+    assert!(d.fields.len() <= 512);
+    let _ = hid::interpret(&d, &[0u8; 64]);
+}
+
+#[test]
+fn usb_interval_and_packet_sizes() {
+    use ksparse::usb::{self, SPEED_FULL, SPEED_HIGH, SPEED_LOW, SPEED_SUPER};
+    assert_eq!(
+        usb::interval_exponent(SPEED_FULL, 1),
+        3,
+        "1 ms = 8 microframes"
+    );
+    assert_eq!(
+        usb::interval_exponent(SPEED_LOW, 10),
+        6,
+        "10 ms rounds down to 64 microframes"
+    );
+    assert_eq!(
+        usb::interval_exponent(SPEED_FULL, 0),
+        3,
+        "zero is treated as 1 ms"
+    );
+    assert_eq!(
+        usb::interval_exponent(SPEED_FULL, 255),
+        10,
+        "clamped to 128 ms"
+    );
+    assert_eq!(usb::interval_exponent(SPEED_HIGH, 4), 3);
+    assert_eq!(
+        usb::interval_exponent(SPEED_SUPER, 0),
+        0,
+        "out-of-range exponent is clamped"
+    );
+    assert_eq!(usb::interval_exponent(SPEED_SUPER, 255), 15);
+    assert_eq!(usb::default_ep0_packet_size(SPEED_HIGH), 64);
+    assert_eq!(usb::ep0_packet_size(SPEED_SUPER, 9), Some(512));
+    assert_eq!(usb::ep0_packet_size(SPEED_FULL, 64), Some(64));
+    assert_eq!(
+        usb::ep0_packet_size(SPEED_FULL, 12),
+        None,
+        "illegal sizes are rejected"
+    );
+    assert_eq!(usb::ep0_packet_size(SPEED_SUPER, 8), None);
+    let e = usb::Endpoint {
+        address: 0x81,
+        attributes: 3,
+        max_packet: 0x1000 | 0x40,
+        interval: 1,
+        max_burst: 0,
+    };
+    assert_eq!((e.packet_size(), e.extra_transactions()), (0x40, 2));
+}
