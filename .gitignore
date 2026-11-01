@@ -1,0 +1,8 @@
+/target/
+/build/
+/out/
+*.iso
+*.img
+*.log
+.vscode/
+.idea/
