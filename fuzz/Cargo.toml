@@ -10,6 +10,7 @@ cargo-fuzz = true
 [dependencies]
 libfuzzer-sys = "0.4"
 ksparse = { path = "../crates/ksparse" }
+ksbt = { path = "../crates/ksbt" }
 
 # Standalone workspace: fuzzing needs a nightly toolchain and must not affect the main build.
 [workspace]
@@ -17,6 +18,13 @@ ksparse = { path = "../crates/ksparse" }
 [[bin]]
 name = "parsers"
 path = "fuzz_targets/parsers.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "bluetooth"
+path = "fuzz_targets/bluetooth.rs"
 test = false
 doc = false
 bench = false

@@ -16,11 +16,14 @@ extern crate std;
 pub mod att;
 pub mod bond;
 pub mod crypto;
+pub mod framing;
 pub mod gatt;
+pub mod harness;
 pub mod hci;
 pub mod hogp;
 pub mod host;
 pub mod l2cap;
+pub mod mtk;
 pub mod smp;
 
 /// A 48-bit Bluetooth device address with its type (public = 0, random = 1).
