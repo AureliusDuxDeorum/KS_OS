@@ -22,7 +22,7 @@ Target hardware: Intel I225-V NIC, USB Bluetooth controller (Realtek/MediaTek/Br
 - ☑ S2.P1 Exceptions & CPU — GDT/TSS/IST, IDT, fault logging, guard-paged kernel stacks *(closes R2, R3; [ADR-0014](adr/0014-exception-handling-and-stacks.md))*
 - ☑ S2.P0 Monochrome placeholder UI ([ADR-0015](adr/0015-placeholder-monochrome-ui.md))
 - ☑ S2.P2 Memory — bitmap frame allocator with DMA runs, kernel-owned W^X page tables with PAT/WC and MMIO window, slab heap ([ADR-0020](adr/0020-memory-management.md))
-- ☐ S2.P3 Interrupts & time — LAPIC/IOAPIC, timer, MSI/MSI-X, interrupt-driven PS/2
+- ☑ S2.P3 Interrupts & time — x2APIC/xAPIC, IOAPIC via MADT, real NMI, 256-vector dispatch, IRQ-safe locks, calibrated TSC clock + 1 kHz tick, MSI composition, interrupt-driven PS/2 ([ADR-0021](adr/0021-interrupts-and-timekeeping.md))
 - ☐ S2.P4 ACPI & PCI — host-testable fuzzed table parsers *(closes R9)*, ECAM enumeration, AML decision *(R7)*
 - ☐ S2.P5 USB xHCI — controller, enumeration, hubs, USB HID with full report-descriptor parser *(prerequisite for Bluetooth, since controllers are USB devices; HID parser shared with Bluetooth HID; [ADR-0016](adr/0016-target-hardware-inventory.md), [ADR-0017](adr/0017-bluetooth-first-internal-controller.md))*
 - ☐ S2.P6 Bluetooth — USB HCI transport, vendor firmware loaders (internal MediaTek first, ASUS BT500 optional second; [ADR-0017](adr/0017-bluetooth-first-internal-controller.md)), HCI LE, SMP (LE Secure Connections), ATT/GATT, HID-over-GATT first ([ADR-0019](adr/0019-ble-hid-first-and-validation-targets.md)), then L2CAP/SDP, SSP pairing and Classic HID, bond handling, unified input events

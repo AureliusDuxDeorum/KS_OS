@@ -81,3 +81,11 @@ Waiver recorded in [ADR-0013](../adr/0013-stage-2-scope.md): Stage 2 may start; 
 
 Gate **not yet closed**. To close: resolve R8 and R9 (R3 done) (or accept a waiver ADR),
 then change **Status** to CLOSED and update `docs/ROADMAP.md`.
+
+## 7. Addendum (2026-11-01, during S2.P3)
+- **W^X in the EFI runtime window — fixed.** Re-auditing the kernel address space after
+  firmware setup found 216 pages mapped writable+executable, caused by Memory Attributes Table
+  entries lacking both the RO and XP flags (R1 in practice, even with a MAT present). Those
+  entries now fall back to the region type's default; the audit reports zero violations and
+  runs on every boot and in CI.
+- **x2APIC is unverified** in this environment (see ADR-0021); xAPIC is the default.
