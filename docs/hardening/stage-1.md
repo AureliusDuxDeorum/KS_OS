@@ -98,3 +98,11 @@ then change **Status** to CLOSED and update `docs/ROADMAP.md`.
   were not range-checked. Both are now rejected by `ksparse::efi`.
 - **IOMMU (VT-d/AMD-Vi) is detected but not enforced**: DMA-capable devices are trusted. Enforcement
   is a Gate G2 item before any untrusted-device exposure.
+
+## 9. Addendum (2026-11-01, S2.P5 USB)
+- New untrusted-data surface: USB descriptors (device/configuration/hub) and HID report descriptors
+  and reports. Parsed in `ksparse` with bounded walks (item, depth, usage and field limits), covered
+  by the same mutation/noise/fuzz regime; hostile HID descriptors (huge sizes, deep push stacks,
+  endless collections, long items) have dedicated tests.
+- The xHCI controller is a DMA master and is **trusted** until IOMMU enforcement (G2 item).
+- Not handled yet: USB hot-plug, SuperSpeed hubs, isochronous transfers.

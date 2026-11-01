@@ -19,8 +19,8 @@ cargo xtask test         # end-to-end tests: boot banner, power off (key + mouse
 cargo xtask image        # just build target/ks_os.img (write it to a USB stick for hardware)
 ```
 
-In the QEMU window: **Tab / arrows + Enter**, **P** (power off), **U** (UEFI setup),
-or click the buttons.
+In the QEMU window (or with a USB or PS/2 keyboard and mouse on real hardware): **Tab / arrows +
+Enter**, **P** (power off), **U** (UEFI setup), **L** (on-screen kernel log), or click the buttons.
 
 ## Where things live
 
