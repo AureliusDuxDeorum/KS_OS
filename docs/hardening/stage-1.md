@@ -76,5 +76,7 @@ All `unsafe` blocks carry a `// SAFETY:` justification; this is enforced by
 | R9 | No host-side fuzzing of ACPI/EFI table parsers | Factor parsers into a host-testable crate and fuzz | **yes** (before gate closes) |
 
 ## 6. Decision
+Waiver recorded in [ADR-0013](../adr/0013-stage-2-scope.md): Stage 2 may start; R3, R8, R9 are rescheduled into Stage 2 phases and Gate G2 cannot close while they are open.
+
 Gate **not yet closed**. To close: resolve R3, R8 and R9 (or accept a waiver ADR),
 then change **Status** to CLOSED and update `docs/ROADMAP.md`.

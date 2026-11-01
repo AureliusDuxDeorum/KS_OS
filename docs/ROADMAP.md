@@ -16,8 +16,20 @@ Each stage ends with a **Hardening gate** ([ADR-0002](adr/0002-staged-developmen
 - ☑ S1.P7 Verification — QEMU/OVMF end-to-end tests, GitHub Actions CI
 - ◐ **Gate G1:** hardening review — see [`hardening/stage-1.md`](hardening/stage-1.md) (open items listed there)
 
-## Later stages (outline only; to be re-planned after Gate G1)
-- Stage 2: Exceptions (GDT/TSS/IDT), physical + virtual memory manager, kernel heap, APIC/timer, interrupt-driven input
+## Stage 2 — Bluetooth input and LAN internet ([ADR-0013](adr/0013-stage-2-scope.md))
+Target hardware: Intel I225-V NIC, USB Bluetooth controller (Realtek/MediaTek/Broadcom/Qualcomm), Classic + BLE HID peripherals.
+
+- ☐ S2.P1 Exceptions & CPU — GDT/TSS/IST, IDT, fault logging, guard-paged kernel stacks *(closes R2, R3)*
+- ☐ S2.P2 Memory — frame allocator, kernel-owned page tables (drop bootloader tables), heap, DMA allocator
+- ☐ S2.P3 Interrupts & time — LAPIC/IOAPIC, timer, MSI/MSI-X, interrupt-driven PS/2
+- ☐ S2.P4 ACPI & PCI — host-testable fuzzed table parsers *(closes R9)*, ECAM enumeration, AML decision *(R7)*
+- ☐ S2.P5 USB xHCI — controller, enumeration, hubs, HID boot keyboards/mice *(R6 for wired)*
+- ☐ S2.P6 Bluetooth — USB HCI transport, vendor firmware loader, L2CAP/SDP, SSP pairing, Classic HID, then LE (SMP, ATT/GATT, HOGP), bond handling, unified input events
+- ☐ S2.P7 Networking — `igc` (I225-V) driver, Ethernet, smoltcp, DHCP, DNS, ICMP, TCP; virtio-net/e1000e for CI
+- ☐ S2.P8 Integration — Bluetooth/network status and pairing screen in the UI, automated + hardware-in-the-loop tests
+- ☐ **Gate G2:** hardening review (cannot close while G1 items R3, R8, R9 are open)
+
+## Later stages (outline only; to be re-planned after Gate G2)
 - Stage 3: Threads, scheduler, user mode, syscalls
 - Stage 4: Capabilities and IPC
-- Stage 5: Userspace services, driver framework (USB HID, AML interpreter), storage, networking
+- Stage 5: Userspace services and driver isolation, storage, TLS

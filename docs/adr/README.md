@@ -16,3 +16,4 @@ Process: [ADR-0001](0001-record-architecture-decisions.md). Template: [template.
 | [0010](0010-power-off-path.md) | Power-off strategy | Accepted |
 | [0011](0011-ps2-polling-input.md) | PS/2 polling input for Stage 1 | Accepted |
 | [0012](0012-limine-pin-and-base-revision.md) | Limine v11 pinned by commit and checksum; base revision 5 | Accepted |
+| [0013](0013-stage-2-scope.md) | Stage 2 scope: Bluetooth input and wired LAN internet | Accepted |
