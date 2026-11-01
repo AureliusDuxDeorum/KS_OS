@@ -22,9 +22,10 @@ mod idt;
 mod ioapic;
 mod irq;
 mod limine;
-mod madt;
+pub use ksparse::madt;
 mod msi;
 mod paging;
+mod pci;
 mod pmm;
 mod ps2;
 mod selftest;
@@ -143,6 +144,14 @@ extern "C" fn kmain() -> ! {
     }
     if let Err(e) = ioapic::init(&boot, &madt) {
         panic!("ioapic: {e:?}");
+    }
+
+    // Buses: PCI enumeration, and a note on DMA-protection hardware (IOMMU enforcement is a Gate G2 item).
+    pci::init(&boot);
+    for (sig, name) in [(b"DMAR", "Intel VT-d"), (b"IVRS", "AMD-Vi")] {
+        if acpi::find_table(&boot, sig).is_ok() {
+            kprintln!("iommu: {name} tables present (not enabled yet; DMA is unrestricted)");
+        }
     }
 
     // Firmware services needed by the buttons.

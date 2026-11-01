@@ -215,8 +215,13 @@ name = "kernel"
 version = "0.1.0"
 dependencies = [
  "font8x8",
+ "ksparse",
  "spin",
 ]
+
+[[package]]
+name = "ksparse"
+version = "0.1.0"
 
 [[package]]
 name = "libc"

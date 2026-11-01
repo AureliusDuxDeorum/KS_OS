@@ -23,6 +23,7 @@ use crate::arch;
 use crate::boot::BootInfo;
 use crate::frames::{Frames, PAGE_SIZE};
 use crate::paging::{Cache, MapError, Mapper, Perm};
+use alloc::vec::Vec;
 
 #[repr(C)]
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -38,12 +39,6 @@ const GLOBAL_VARIABLE: Guid = Guid {
     d2: 0x93CA,
     d3: 0x11D2,
     d4: [0xAA, 0x0D, 0x00, 0xE0, 0x98, 0x03, 0x2B, 0x8C],
-};
-const MEMORY_ATTRIBUTES_TABLE: Guid = Guid {
-    d1: 0xDCFA_911D,
-    d2: 0x26EB,
-    d3: 0x469F,
-    d4: [0xA2, 0x20, 0x38, 0xB7, 0xDC, 0x46, 0x12, 0x20],
 };
 
 const fn utf16<const N: usize>(s: &str) -> [u16; N] {
@@ -76,13 +71,9 @@ const EFI_NOT_FOUND: Status = (1 << 63) | 14;
 const RESET_COLD: u32 = 0;
 const RESET_SHUTDOWN: u32 = 2;
 
-const TYPE_RUNTIME_CODE: u32 = 5;
-const TYPE_RUNTIME_DATA: u32 = 6;
-const TYPE_MMIO: u32 = 11;
-const TYPE_MMIO_PORT_SPACE: u32 = 12;
-const ATTR_XP: u64 = 1 << 14;
-const ATTR_RO: u64 = 1 << 17;
-const ATTR_RUNTIME: u64 = 1 << 63;
+use ksparse::efi::{
+    self as efi_fmt, TYPE_MMIO, TYPE_MMIO_PORT_SPACE, TYPE_RUNTIME_CODE, TYPE_RUNTIME_DATA,
+};
 
 #[repr(C)]
 struct TableHeader {
@@ -108,12 +99,6 @@ struct SystemTable {
     boot_services: usize,
     number_of_table_entries: usize,
     configuration_table: u64,
-}
-
-#[repr(C)]
-struct ConfigurationTable {
-    guid: Guid,
-    table: u64,
 }
 
 #[repr(C)]
@@ -169,32 +154,6 @@ pub struct Efi {
     pub strict_wx: bool,
 }
 
-fn rd32(b: &[u8], off: usize) -> u32 {
-    u32::from_le_bytes([b[off], b[off + 1], b[off + 2], b[off + 3]])
-}
-
-fn rd64(b: &[u8], off: usize) -> u64 {
-    let mut a = [0u8; 8];
-    a.copy_from_slice(&b[off..off + 8]);
-    u64::from_le_bytes(a)
-}
-
-struct Desc {
-    kind: u32,
-    phys: u64,
-    pages: u64,
-    attr: u64,
-}
-
-fn parse_desc(b: &[u8]) -> Desc {
-    Desc {
-        kind: rd32(b, 0),
-        phys: rd64(b, 8),
-        pages: rd64(b, 24),
-        attr: rd64(b, 32),
-    }
-}
-
 /// Reads a `T` from firmware memory reachable through the HHDM.
 fn read_fw<T>(boot: &BootInfo, phys: u64, what: &'static str) -> Result<&'static T, EfiError> {
     if !boot.hhdm_covers(phys, core::mem::size_of::<T>() as u64) {
@@ -238,21 +197,19 @@ impl Efi {
         }
 
         let (map_bytes, desc_size) = boot.efi_memmap.ok_or(EfiError::Missing("EFI memory map"))?;
-        if desc_size < 40 {
+        if !(efi_fmt::MIN_DESCRIPTOR_SIZE..=efi_fmt::MAX_DESCRIPTOR_SIZE).contains(&desc_size) {
             return Err(EfiError::Invalid("EFI descriptor size"));
         }
-        let descs = || {
-            map_bytes
-                .chunks_exact(desc_size)
-                .map(parse_desc)
-                .filter(|d| d.attr & ATTR_RUNTIME != 0)
+        // Runtime regions as `(raw descriptor, parsed)`; insane descriptors are ignored everywhere.
+        let runtime = || {
+            efi_fmt::descriptors(map_bytes, desc_size)
+                .filter(|(_, d)| d.is_runtime() && d.is_sane())
         };
-        let count = descs().count();
+        let count = runtime().count();
         if count == 0 {
             return Err(EfiError::Missing("runtime memory regions"));
         }
-        let rt_in_runtime =
-            descs().any(|d| rt_phys >= d.phys && rt_phys < d.phys + d.pages * PAGE_SIZE);
+        let rt_in_runtime = runtime().any(|(_, d)| rt_phys >= d.phys && rt_phys < d.end());
         if !rt_in_runtime {
             return Err(EfiError::Invalid("runtime table outside runtime regions"));
         }
@@ -277,7 +234,7 @@ impl Efi {
         let window_limit = 1u64 << 39;
 
         let code_perm = if mat.is_some() { Perm::RX } else { Perm::RWX };
-        for d in descs() {
+        for (_, d) in runtime() {
             let perm = match d.kind {
                 TYPE_RUNTIME_CODE => code_perm,
                 TYPE_MMIO => Perm::MMIO,
@@ -295,22 +252,13 @@ impl Efi {
             }
         }
 
-        // Tighten permissions per the Memory Attributes Table.
-        if let Some(m) = &mat {
-            for e in m.entries() {
-                let d = parse_desc(e);
-                if d.attr & ATTR_RUNTIME == 0 && d.attr & (ATTR_RO | ATTR_XP) == 0 {
+        // Tighten permissions per the Memory Attributes Table (W^X policy: see ksparse::efi).
+        if let Some(sections) = &mat {
+            for d in sections {
+                if !d.is_runtime() && d.attr & (efi_fmt::ATTR_RO | efi_fmt::ATTR_XP) == 0 {
                     continue;
                 }
-                // W^X is never relaxed: RO+XP image sections are as stated; a section the
-                // firmware leaves unrestricted falls back to its region type's default
-                // (code stays executable, everything else stays non-executable).
-                let (write, exec) = match (d.attr & ATTR_RO != 0, d.attr & ATTR_XP != 0) {
-                    (true, false) => (false, true),
-                    (false, true) => (true, false),
-                    (true, true) => (false, false),
-                    (false, false) => (d.kind != TYPE_RUNTIME_CODE, d.kind == TYPE_RUNTIME_CODE),
-                };
+                let (write, exec) = efi_fmt::section_permissions(d.kind, d.attr);
                 let perm = Perm {
                     write,
                     exec,
@@ -355,12 +303,8 @@ impl Efi {
             core::slice::from_raw_parts_mut(boot.phys_to_virt(map_phys) as *mut u8, map_len)
         };
         let mut o = 0;
-        for chunk in map_bytes.chunks_exact(desc_size) {
-            let d = parse_desc(chunk);
-            if d.attr & ATTR_RUNTIME == 0 {
-                continue;
-            }
-            out[o..o + desc_size].copy_from_slice(chunk);
+        for (raw, d) in runtime() {
+            out[o..o + desc_size].copy_from_slice(raw);
             out[o + 16..o + 24].copy_from_slice(&(window_base + d.phys).to_le_bytes());
             o += desc_size;
         }
@@ -482,53 +426,32 @@ fn map_bytes_version(_boot: &BootInfo) -> u32 {
         .map_or(1, |r| r.desc_version as u32)
 }
 
-/// A view of the UEFI Memory Attributes Table.
-struct Mat {
-    bytes: &'static [u8],
-    desc_size: usize,
-    count: usize,
-}
-
-impl Mat {
-    fn entries(&self) -> impl Iterator<Item = &'static [u8]> + '_ {
-        self.bytes[16..]
-            .chunks_exact(self.desc_size)
-            .take(self.count)
-    }
-}
-
-fn find_mat(boot: &BootInfo, st: &SystemTable) -> Result<Option<Mat>, EfiError> {
-    let n = st.number_of_table_entries as u64;
-    let table = fw_bytes(
+/// Finds and parses the UEFI Memory Attributes Table through the configuration-table array.
+fn find_mat(
+    boot: &BootInfo,
+    st: &SystemTable,
+) -> Result<Option<Vec<efi_fmt::MemoryDescriptor>>, EfiError> {
+    let len = efi_fmt::config_tables_len(st.number_of_table_entries)
+        .ok_or(EfiError::Invalid("configuration table count"))?;
+    let tables = fw_bytes(
         boot,
         st.configuration_table,
-        n * core::mem::size_of::<ConfigurationTable>() as u64,
+        len as u64,
         "configuration tables",
     )?;
-    for i in 0..n as usize {
-        // SAFETY: `table` spans `n` entries; unaligned read of a plain-old-data struct.
-        let ct: ConfigurationTable = unsafe {
-            core::ptr::read_unaligned(table.as_ptr().cast::<ConfigurationTable>().add(i))
-        };
-        if ct.guid != MEMORY_ATTRIBUTES_TABLE {
-            continue;
-        }
-        let hdr = fw_bytes(boot, ct.table, 16, "memory attributes table")?;
-        let (num, dsize) = (rd32(hdr, 4) as usize, rd32(hdr, 8) as usize);
-        if dsize < 40 || num > 4096 {
-            return Ok(None);
-        }
-        let bytes = fw_bytes(
-            boot,
-            ct.table,
-            (16 + num * dsize) as u64,
-            "memory attributes table entries",
-        )?;
-        return Ok(Some(Mat {
-            bytes,
-            desc_size: dsize,
-            count: num,
-        }));
-    }
-    Ok(None)
+    let Some(ptr) = efi_fmt::find_config_table(tables, &efi_fmt::MAT_GUID) else {
+        return Ok(None);
+    };
+    let header = fw_bytes(
+        boot,
+        ptr,
+        efi_fmt::MAT_HEADER_LEN as u64,
+        "memory attributes table",
+    )?;
+    let Some(total) = efi_fmt::mat_total_len(header) else {
+        kprintln!("efi: ignoring a malformed Memory Attributes Table");
+        return Ok(None);
+    };
+    let bytes = fw_bytes(boot, ptr, total as u64, "memory attributes table entries")?;
+    Ok(efi_fmt::parse_mat(bytes))
 }
