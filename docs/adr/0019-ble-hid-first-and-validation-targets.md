@@ -14,7 +14,7 @@ The owner's kernel log shows, on the target machine:
 - `hci1` (ASUS USB-BT500): Realtek RTL8761B (`lmp_subver=8761`, `rom_version=1`), firmware
   `rtl_bt/rtl8761bu_fw.bin` + `rtl_bt/rtl8761bu_config.bin` (6-byte config, 30210 bytes total),
   loaded firmware version `0xdfc6d922`.
-- The mouse is a **Logitech MX Master 3S** (`fc:34:97:31:b9:6d`) registered as a Bluetooth
+- The mouse is a **Logitech MX Master 3S** registered as a Bluetooth
   HID device with Logitech HID++ — a **Bluetooth Low Energy** (HID-over-GATT) peripheral.
   The keyboard (Corsair K70 PRO MINI WIRELESS) also offers Bluetooth; its transport (LE vs
   BR/EDR) is still to be confirmed.
@@ -39,3 +39,12 @@ The owner's kernel log shows, on the target machine:
 LE security (SMP, LE Secure Connections with ECDH P-256, AES-CMAC) is cryptography the kernel
 must implement or import: we will use audited `no_std` RustCrypto crates rather than hand-
 rolled primitives, and record them in the supply-chain gate.
+
+## Errata (2026-11-01)
+- The address `fc:34:97:31:b9:6d` originally quoted for the mouse is the **host adapter's**
+  address: Linux prints it in the "on …" field of every `hid-generic` line, and it is identical
+  for the mouse and for the Corsair K70 MINI keyboard. Both peripherals were therefore paired
+  to the same local controller. The peripherals' own addresses are not yet known and are not needed.
+- The keyboard log line (`BLUETOOTH HID v0.01 Keyboard [CORSAIR K70 MINI]`) does not by itself
+  distinguish LE from BR/EDR: `hid-generic` reports "BLUETOOTH HID" for both. The plan is
+  unchanged because both transports are implemented (LE first, then Classic).
