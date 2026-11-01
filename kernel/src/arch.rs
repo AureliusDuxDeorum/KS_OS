@@ -190,3 +190,74 @@ pub fn enable_sse() {
         asm!("ldmxcsr [{}]", in(reg) &mxcsr, options(nostack, readonly, preserves_flags));
     }
 }
+
+/// Invalidates the TLB entry for one page.
+#[inline]
+pub fn invlpg(addr: u64) {
+    // SAFETY: INVLPG only drops a cached translation.
+    unsafe { asm!("invlpg [{}]", in(reg) addr, options(nostack, preserves_flags)) };
+}
+
+/// Reads CR2 (the faulting address of the last page fault).
+#[inline]
+pub fn read_cr2() -> u64 {
+    let v: u64;
+    // SAFETY: reading a control register has no side effects.
+    unsafe { asm!("mov {}, cr2", out(reg) v, options(nomem, nostack, preserves_flags)) };
+    v
+}
+
+/// Pseudo-descriptor for `lgdt` / `lidt`.
+#[repr(C, packed)]
+pub struct DescriptorPointer {
+    pub limit: u16,
+    pub base: u64,
+}
+
+/// Loads the GDT and reloads every segment register.
+///
+/// # Safety
+/// `gdt` must describe a valid GDT that stays alive and unmodified; `code` and
+/// `data` must be a 64-bit code and a data selector within it.
+pub unsafe fn load_gdt(gdt: &DescriptorPointer, code: u16, data: u16) {
+    // SAFETY: caller guarantees the GDT is valid; the far return reloads CS.
+    unsafe {
+        asm!(
+            "lgdt [{gdt}]",
+            "push {code}",
+            "lea {tmp}, [rip + 2f]",
+            "push {tmp}",
+            "retfq",
+            "2:",
+            "mov ds, {data:x}",
+            "mov es, {data:x}",
+            "mov ss, {data:x}",
+            "xor {tmp:e}, {tmp:e}",
+            "mov fs, {tmp:x}",
+            "mov gs, {tmp:x}",
+            gdt = in(reg) gdt,
+            code = in(reg) u64::from(code),
+            data = in(reg) u64::from(data),
+            tmp = out(reg) _,
+            options(preserves_flags),
+        );
+    }
+}
+
+/// Loads the task register.
+///
+/// # Safety
+/// `selector` must reference an available 64-bit TSS descriptor in the loaded GDT.
+pub unsafe fn load_tss(selector: u16) {
+    // SAFETY: caller guarantees the selector is valid.
+    unsafe { asm!("ltr {:x}", in(reg) selector, options(nomem, nostack, preserves_flags)) };
+}
+
+/// Loads the IDT.
+///
+/// # Safety
+/// `idt` must describe a valid IDT that stays alive for as long as it is loaded.
+pub unsafe fn load_idt(idt: &DescriptorPointer) {
+    // SAFETY: caller guarantees the IDT is valid.
+    unsafe { asm!("lidt [{}]", in(reg) idt, options(readonly, nostack, preserves_flags)) };
+}

@@ -11,19 +11,20 @@ pub struct BootInfo {
     pub efi_system_table: Option<u64>,
     pub efi_memmap: Option<(&'static [u8], usize)>,
     pub bootloader: (&'static str, &'static str),
+    pub cmdline: &'static str,
 }
 
 /// Converts a NUL-terminated C string from the bootloader into a `&str`.
 ///
 /// # Safety
 /// `p` must be null or point to a NUL-terminated string valid for `'static`.
-unsafe fn cstr(p: *const core::ffi::c_char) -> &'static str {
+unsafe fn cstr(p: *const core::ffi::c_char, max: usize) -> &'static str {
     if p.is_null() {
         return "?";
     }
     let mut len = 0;
     // SAFETY: caller guarantees NUL termination.
-    while unsafe { *p.add(len) } != 0 && len < 64 {
+    while unsafe { *p.add(len) } != 0 && len < max {
         len += 1;
     }
     // SAFETY: `len` bytes were just read from the string.
@@ -60,9 +61,14 @@ impl BootInfo {
         });
         let bootloader = limine::BOOTLOADER_INFO.response().map_or(("?", "?"), |r| {
             // SAFETY: Limine supplies NUL-terminated strings.
-            unsafe { (cstr(r.name), cstr(r.version)) }
+            unsafe { (cstr(r.name, 64), cstr(r.version, 64)) }
         });
+        let cmdline = limine::EXECUTABLE_CMDLINE
+            .response()
+            // SAFETY: Limine supplies a NUL-terminated command line.
+            .map_or("", |r| unsafe { cstr(r.cmdline, 128) });
         Ok(Self {
+            cmdline,
             hhdm,
             framebuffer,
             memmap,

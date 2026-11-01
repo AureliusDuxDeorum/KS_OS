@@ -7,6 +7,7 @@ use crate::limine;
 pub struct Color(pub u8, pub u8, pub u8);
 
 /// A 32-bit linear framebuffer with arbitrary RGB channel layout.
+#[derive(Clone)]
 pub struct Fb {
     base: *mut u32,
     pub width: usize,
@@ -141,4 +142,50 @@ impl Fb {
         let w = Self::text_width(s, scale);
         self.draw_text((self.width as i32 - w) / 2, y, s, scale, c);
     }
+}
+
+// SAFETY: `Fb` is a plain descriptor of device memory; single-core kernel code serialises use.
+unsafe impl Send for Fb {}
+
+/// Framebuffer copy used by the fault and panic paths.
+static FATAL_FB: spin::Mutex<Option<Fb>> = spin::Mutex::new(None);
+
+/// Registers the framebuffer used to display fatal errors.
+pub fn register_fatal_fb(fb: Fb) {
+    *FATAL_FB.lock() = Some(fb);
+}
+
+/// Draws a monochrome fatal-error screen if a framebuffer is registered.
+pub fn show_fatal(title: &str, detail: &str, rip: u64, cr2: u64, error: u64) {
+    use core::fmt::Write;
+    // The lock may be held if we faulted while drawing; fall through silently then.
+    let Some(mut guard) = FATAL_FB.try_lock() else {
+        return;
+    };
+    let Some(fb) = guard.as_mut() else { return };
+    let (w, h) = (fb.width as i32, fb.height as i32);
+    let scale = ((fb.width / 400).min(fb.height / 240)).clamp(1, 4) as i32;
+    let white = Color(0xFF, 0xFF, 0xFF);
+    let gray = Color(0x9A, 0x9A, 0x9A);
+    fb.fill_rect(0, 0, w, h, Color(0, 0, 0));
+    fb.fill_rect(0, 0, w, 14 * scale, white);
+    fb.draw_text(4 * scale, 3 * scale, "KERNEL FAULT", scale, Color(0, 0, 0));
+    let mut y = 22 * scale;
+    fb.draw_text(4 * scale, y, title, 2 * scale, white);
+    y += 20 * scale;
+    if !detail.is_empty() {
+        fb.draw_text(4 * scale, y, detail, scale, white);
+        y += 12 * scale;
+    }
+    let mut line = crate::strbuf::StrBuf::<96>::new();
+    let _ = write!(line, "rip={rip:#018x}  cr2={cr2:#x}  error={error:#x}");
+    fb.draw_text(4 * scale, y, line.as_str(), scale, gray);
+    y += 12 * scale;
+    fb.draw_text(
+        4 * scale,
+        y,
+        "Full register dump on the serial console. System halted.",
+        scale,
+        gray,
+    );
 }

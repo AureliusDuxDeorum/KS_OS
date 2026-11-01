@@ -99,7 +99,7 @@ impl<R> Request<R, ()> {
 
 pub const BOOTLOADER_INFO_ID: [u64; 2] = [0xf55038d8e2a1202f, 0x279426fcf5f59740];
 pub const FIRMWARE_TYPE_ID: [u64; 2] = [0x8c2f75d90bef28a8, 0x7045a4688eac00c3];
-pub const STACK_SIZE_ID: [u64; 2] = [0x224ef0460a8e8926, 0xe1cb0fc25f46ea3d];
+pub const EXECUTABLE_CMDLINE_ID: [u64; 2] = [0x4b161536e598651e, 0xb390ad4a2f1f303a];
 pub const HHDM_ID: [u64; 2] = [0x48dcf1cb8ad2b852, 0x63984e959a98244b];
 pub const FRAMEBUFFER_ID: [u64; 2] = [0x9d5827dcd881dd75, 0xa3148604f6fab11b];
 pub const MEMMAP_ID: [u64; 2] = [0x67cf3d9d378a806f, 0xe304acdfc50c3c62];
@@ -122,10 +122,10 @@ pub struct FirmwareTypeResponse {
 
 pub const FIRMWARE_EFI64: u64 = 2;
 
-/// Stack-size request payload.
 #[repr(C)]
-pub struct StackSizeResponse {
+pub struct ExecutableCmdlineResponse {
     pub revision: u64,
+    pub cmdline: *const c_char,
 }
 
 #[repr(C)]
@@ -223,8 +223,8 @@ pub static BASE: BaseRevision = BaseRevision::new(BASE_REVISION);
 
 #[used]
 #[link_section = ".limine_requests"]
-pub static STACK_SIZE: Request<StackSizeResponse, u64> =
-    Request::with_extra(STACK_SIZE_ID, 0, 256 * 1024);
+pub static EXECUTABLE_CMDLINE: Request<ExecutableCmdlineResponse> =
+    Request::new(EXECUTABLE_CMDLINE_ID);
 
 #[used]
 #[link_section = ".limine_requests"]

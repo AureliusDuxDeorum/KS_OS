@@ -13,10 +13,14 @@ mod boot;
 mod efi;
 mod fb;
 mod frames;
+mod gdt;
+mod idt;
 mod limine;
 mod paging;
 mod ps2;
+mod selftest;
 mod serial;
+mod stacks;
 mod strbuf;
 mod ui;
 
@@ -25,9 +29,25 @@ use strbuf::StrBuf;
 use ui::{Action, Level, Ui};
 
 /// Kernel entry point, jumped to by Limine in 64-bit long mode.
+///
+/// Switches from the bootloader's stack to the kernel's own guard-paged stack
+/// before running any Rust code.
+#[unsafe(naked)]
 #[no_mangle]
 extern "C" fn _start() -> ! {
-    arch::cli();
+    core::arch::naked_asm!(
+        "cli",
+        "lea rsp, [rip + {stack} + {size}]",
+        "xor ebp, ebp",
+        "call {main}",
+        "ud2",
+        stack = sym stacks::KERNEL_STACK,
+        size = const stacks::KERNEL_STACK_SIZE + 4096,
+        main = sym kmain,
+    )
+}
+
+extern "C" fn kmain() -> ! {
     serial::init();
     kprintln!("KS_OS 0.1.0 booting");
 
@@ -59,8 +79,20 @@ extern "C" fn _start() -> ! {
         .sum();
     kprintln!("memory: {} MiB usable", usable >> 20);
 
+    // CPU exception handling comes first so every later fault is diagnosable.
+    gdt::init();
+    idt::init();
+    match stacks::install_guards(&boot) {
+        Ok(()) => kprintln!("cpu: GDT/TSS/IDT loaded, stack guard pages installed"),
+        Err(e) => kprintln!("cpu: stack guard pages unavailable ({e:?})"),
+    }
+
     // The one line this stage exists to print.
     kprintln!("OS operating");
+
+    if let Some(test) = selftest::requested(boot.cmdline) {
+        selftest::run(test);
+    }
 
     let mut frames = frames::BumpFrames::new(&boot);
 
@@ -108,6 +140,7 @@ extern "C" fn _start() -> ! {
     let mut info = StrBuf::<96>::new();
     ui::info_line(&mut info, &fb, "UEFI");
     let setup_ok = efi.as_ref().is_some_and(|e| e.firmware_setup_supported());
+    fb::register_fatal_fb(fb.clone());
     let mut ui = Ui::new(fb, setup_ok, ps2.has_mouse);
     ui.draw_all(info.as_str());
     ui.describe();
@@ -159,5 +192,6 @@ extern "C" fn _start() -> ! {
 #[panic_handler]
 fn panic(info: &core::panic::PanicInfo<'_>) -> ! {
     serial::_print_panic(format_args!("\nKERNEL PANIC: {info}\n"));
+    fb::show_fatal("KERNEL PANIC", "", 0, 0, 0);
     arch::halt_forever()
 }

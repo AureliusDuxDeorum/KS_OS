@@ -33,6 +33,10 @@ SECTIONS
         KEEP(*(.limine_requests_end))
     } :data
 
+    .got : {
+        *(.got .got.*)
+    }
+
     .bss : {
         *(.bss .bss.*)
         *(COMMON)

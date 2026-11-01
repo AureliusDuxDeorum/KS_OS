@@ -157,3 +157,28 @@ impl<'a> Mapper<'a> {
         Ok(())
     }
 }
+
+/// Unmaps one 4 KiB page in the *currently active* page tables.
+///
+/// Fails if the page is covered by a huge page (splitting is not supported yet).
+/// Tables shared with other roots (the kernel half) change for all of them.
+pub fn unmap_active(boot: &BootInfo, virt: u64) -> Result<(), MapError> {
+    let mut table = crate::arch::read_cr3() & ADDR_MASK;
+    for level in (1..=3).rev() {
+        let idx = ((virt >> (12 + 9 * level)) & 0x1FF) as usize;
+        // SAFETY: `table` is a page-table frame reachable through the HHDM.
+        let entry = unsafe { (boot.phys_to_virt(table) as *const u64).add(idx).read() };
+        if entry & PRESENT == 0 {
+            return Ok(()); // nothing mapped here already
+        }
+        if entry & (1 << 7) != 0 {
+            return Err(MapError::Conflict);
+        }
+        table = entry & ADDR_MASK;
+    }
+    let idx = ((virt >> 12) & 0x1FF) as usize;
+    // SAFETY: `table` is the leaf (PT) frame; clearing the entry unmaps the page.
+    unsafe { (boot.phys_to_virt(table) as *mut u64).add(idx).write(0) };
+    crate::arch::invlpg(virt);
+    Ok(())
+}
