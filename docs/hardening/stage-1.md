@@ -106,3 +106,12 @@ then change **Status** to CLOSED and update `docs/ROADMAP.md`.
   endless collections, long items) have dedicated tests.
 - The xHCI controller is a DMA master and is **trusted** until IOMMU enforcement (G2 item).
 - Not handled yet: USB hot-plug, SuperSpeed hubs, isochronous transfers.
+
+## 10. Addendum (2026-11-02, S2.P6 Bluetooth)
+- New untrusted-data surface: everything received over the radio (advertisements, ATT, SMP, L2CAP),
+  the vendor firmware file and the stored bond record. Parsers are bounded and fuzzed
+  (880 k executions, no crash), crypto is checked against the Core Spec vectors.
+- **Open items for Gate G2** (details in ADR-0025): bonds stored unencrypted in UEFI NV storage;
+  automatic pairing with any discoverable HID device (needs an authorisation policy); Just Works
+  pairs are MITM-exposed; no Classic BR/EDR.
+- MediaTek bring-up and the USB HCI transport are **unverified on hardware**; see `docs/hardware-testing.md`.

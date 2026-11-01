@@ -4,7 +4,7 @@ A custom capability-based microkernel operating system for x86_64, written in Ru
 (plus minimal assembly). This repository is the construction site: source, build
 tooling, and the decision record.
 
-**Current state (Stage 1):** boots under UEFI via Limine, announces **OS operating**
+**Current state (Stage 2, in progress):** boots under UEFI via Limine, announces **OS operating**
 on serial and screen, and offers a **Power off** button and a **Boot into UEFI**
 button (keyboard or PS/2 mouse).
 
