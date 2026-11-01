@@ -21,8 +21,8 @@
 
 use crate::arch;
 use crate::boot::BootInfo;
-use crate::frames::{BumpFrames, PAGE_SIZE};
-use crate::paging::{MapError, Mapper, Perm};
+use crate::frames::{Frames, PAGE_SIZE};
+use crate::paging::{Cache, MapError, Mapper, Perm};
 
 #[repr(C)]
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -220,7 +220,7 @@ fn fw_bytes(
 
 impl Efi {
     /// Brings up runtime services. Interrupts must be disabled.
-    pub fn init(boot: &BootInfo, frames: &mut BumpFrames<'_>) -> Result<Self, EfiError> {
+    pub fn init(boot: &BootInfo, frames: &mut Frames) -> Result<Self, EfiError> {
         let st_virt = boot
             .efi_system_table
             .ok_or(EfiError::Missing("EFI system table"))?;
@@ -261,19 +261,13 @@ impl Efi {
         let mat = find_mat(boot, st)?;
 
         // CPU prerequisites for running firmware code.
-        let nx = arch::cpu_has_nx();
-        if nx {
-            // SAFETY: EFER exists on every x86_64 CPU; NXE only enables the XD bit.
-            unsafe { arch::wrmsr(arch::MSR_EFER, arch::rdmsr(arch::MSR_EFER) | arch::EFER_NXE) };
-        }
+        let nx = crate::vmm::nx_enabled();
         arch::enable_sse();
 
         let mapper = Mapper::new(boot, nx);
         let cur_root = arch::read_cr3() & 0x000F_FFFF_FFFF_F000;
         let boot_root = mapper.new_root(frames)?;
-        let final_root = mapper.new_root(frames)?;
         mapper.share_kernel_half(boot_root, cur_root);
-        mapper.share_kernel_half(final_root, cur_root);
 
         let window_index = (257..500)
             .rev()
@@ -311,7 +305,11 @@ impl Efi {
                 let perm = Perm {
                     write: d.attr & ATTR_RO == 0,
                     exec: d.attr & ATTR_XP == 0,
-                    uncached: d.kind == TYPE_MMIO,
+                    cache: if d.kind == TYPE_MMIO {
+                        Cache::Uncached
+                    } else {
+                        Cache::WriteBack
+                    },
                 };
                 for i in 0..d.pages {
                     let p = d.phys + i * PAGE_SIZE;
@@ -357,7 +355,6 @@ impl Efi {
             out[o + 16..o + 24].copy_from_slice(&(window_base + d.phys).to_le_bytes());
             o += desc_size;
         }
-        mapper.share_entry(final_root, boot_root, window_index);
 
         // ---- Point of no return: relocate the firmware. ----
         arch::cli();
@@ -376,14 +373,19 @@ impl Efi {
         };
 
         let (rt, mode) = if status == EFI_SUCCESS {
-            // SAFETY: the window (and nothing from the lower half) is all firmware needs now.
-            unsafe { arch::write_cr3(final_root) };
+            // The window joins the kernel address space permanently; the identity map is dropped.
+            mapper.share_entry(cur_root, boot_root, window_index);
+            // SAFETY: the kernel root maps the kernel plus the firmware window; firmware now
+            // runs at window addresses.
+            unsafe { arch::write_cr3(cur_root) };
             (
                 (window_base + rt_phys) as *const RuntimeServices,
                 Mode::Virtual,
             )
         } else {
             kprintln!("efi: SetVirtualAddressMap failed ({status:#x}); staying in physical mode");
+            // The identity-mapped tables become the kernel's permanent root.
+            crate::vmm::set_kernel_root(boot_root);
             (rt_phys as *const RuntimeServices, Mode::Physical)
         };
 

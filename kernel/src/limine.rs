@@ -100,6 +100,7 @@ impl<R> Request<R, ()> {
 pub const BOOTLOADER_INFO_ID: [u64; 2] = [0xf55038d8e2a1202f, 0x279426fcf5f59740];
 pub const FIRMWARE_TYPE_ID: [u64; 2] = [0x8c2f75d90bef28a8, 0x7045a4688eac00c3];
 pub const EXECUTABLE_CMDLINE_ID: [u64; 2] = [0x4b161536e598651e, 0xb390ad4a2f1f303a];
+pub const EXECUTABLE_ADDRESS_ID: [u64; 2] = [0x71ba76863cc55f63, 0xb2644a48c516a487];
 pub const HHDM_ID: [u64; 2] = [0x48dcf1cb8ad2b852, 0x63984e959a98244b];
 pub const FRAMEBUFFER_ID: [u64; 2] = [0x9d5827dcd881dd75, 0xa3148604f6fab11b];
 pub const MEMMAP_ID: [u64; 2] = [0x67cf3d9d378a806f, 0xe304acdfc50c3c62];
@@ -126,6 +127,13 @@ pub const FIRMWARE_EFI64: u64 = 2;
 pub struct ExecutableCmdlineResponse {
     pub revision: u64,
     pub cmdline: *const c_char,
+}
+
+#[repr(C)]
+pub struct ExecutableAddressResponse {
+    pub revision: u64,
+    pub physical_base: u64,
+    pub virtual_base: u64,
 }
 
 #[repr(C)]
@@ -233,6 +241,11 @@ pub static BOOTLOADER_INFO: Request<BootloaderInfoResponse> = Request::new(BOOTL
 #[used]
 #[link_section = ".limine_requests"]
 pub static FIRMWARE_TYPE: Request<FirmwareTypeResponse> = Request::new(FIRMWARE_TYPE_ID);
+
+#[used]
+#[link_section = ".limine_requests"]
+pub static EXECUTABLE_ADDRESS: Request<ExecutableAddressResponse> =
+    Request::new(EXECUTABLE_ADDRESS_ID);
 
 #[used]
 #[link_section = ".limine_requests"]

@@ -15,16 +15,22 @@ SECTIONS
     . = 0xffffffff80000000;
     __kernel_start = .;
 
+    __text_start = .;
     .text : {
         *(.text .text.*)
     } :text
+    __text_end = .;
 
     . = ALIGN(4096);
+    __rodata_start = .;
     .rodata : {
         *(.rodata .rodata.*)
     } :rodata
+    . = ALIGN(4096);
+    __rodata_end = .;
 
     . = ALIGN(4096);
+    __data_start = .;
     .data : {
         *(.data .data.*)
         /* Limine request block: start marker, requests, end marker. */
@@ -43,6 +49,7 @@ SECTIONS
     } :data
 
     . = ALIGN(4096);
+    __data_end = .;
     __kernel_end = .;
 
     /DISCARD/ : {

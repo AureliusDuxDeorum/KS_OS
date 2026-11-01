@@ -5,8 +5,7 @@
 //! the overflowed stack, so it escalates to a double fault that runs on a
 //! dedicated IST stack and can name the culprit (see `idt.rs`).
 
-use crate::boot::BootInfo;
-use crate::paging;
+use crate::paging::{MapError, Mapper};
 use core::cell::UnsafeCell;
 use core::ptr::addr_of;
 
@@ -52,15 +51,20 @@ fn all() -> [(&'static str, u64, u64); 4] {
     ]
 }
 
+/// Virtual address of the kernel stack's guard page (for tests).
+pub fn kernel_stack_guard() -> u64 {
+    addr_of!(KERNEL_STACK) as u64
+}
+
 /// Top (initial stack pointer) of a stack.
 pub fn top<const N: usize>(s: &'static Stack<N>) -> u64 {
     addr_of!(*s) as u64 + (PAGE + N) as u64
 }
 
-/// Unmaps every guard page in the active page tables.
-pub fn install_guards(boot: &BootInfo) -> Result<(), paging::MapError> {
+/// Unmaps every guard page in the address space rooted at `root`.
+pub fn install_guards(mapper: &Mapper<'_>, root: u64) -> Result<(), MapError> {
     for (_, base, _) in all() {
-        paging::unmap_active(boot, base)?;
+        mapper.unmap(root, base)?;
     }
     Ok(())
 }

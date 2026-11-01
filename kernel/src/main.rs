@@ -4,6 +4,8 @@
 #![no_main]
 #![deny(clippy::undocumented_unsafe_blocks)]
 
+extern crate alloc;
+
 #[macro_use]
 mod log;
 
@@ -14,15 +16,18 @@ mod efi;
 mod fb;
 mod frames;
 mod gdt;
+mod heap;
 mod idt;
 mod limine;
 mod paging;
+mod pmm;
 mod ps2;
 mod selftest;
 mod serial;
 mod stacks;
 mod strbuf;
 mod ui;
+mod vmm;
 
 use core::fmt::Write;
 use strbuf::StrBuf;
@@ -82,19 +87,30 @@ extern "C" fn kmain() -> ! {
     // CPU exception handling comes first so every later fault is diagnosable.
     gdt::init();
     idt::init();
-    match stacks::install_guards(&boot) {
-        Ok(()) => kprintln!("cpu: GDT/TSS/IDT loaded, stack guard pages installed"),
-        Err(e) => kprintln!("cpu: stack guard pages unavailable ({e:?})"),
+    kprintln!("cpu: GDT/TSS/IDT loaded");
+
+    // Memory: physical allocator, kernel-owned address space (W^X, guard pages), heap.
+    pmm::init(&boot);
+    let st = pmm::stats();
+    kprintln!(
+        "pmm: {} MiB managed, {} MiB free",
+        st.total_frames * 4 / 1024,
+        st.free_frames * 4 / 1024
+    );
+    if let Err(e) = vmm::init(&boot) {
+        panic!("vmm: cannot build kernel address space: {e:?}");
     }
+    kprintln!("vmm: kernel address space active, stack guard pages installed");
+    heap::init(boot.hhdm);
 
     // The one line this stage exists to print.
     kprintln!("OS operating");
 
     if let Some(test) = selftest::requested(boot.cmdline) {
-        selftest::run(test);
+        selftest::run(test, &boot);
     }
 
-    let mut frames = frames::BumpFrames::new(&boot);
+    let mut frames = frames::Frames;
 
     // Firmware services needed by the buttons.
     let acpi = match acpi::Acpi::init(&boot) {
@@ -123,7 +139,8 @@ extern "C" fn kmain() -> ! {
         }
     };
 
-    kprintln!("frames: {} early page(s) allocated", frames.allocated());
+    let st = pmm::stats();
+    kprintln!("pmm: {} MiB free", st.free_frames * 4 / 1024);
 
     let mut ps2 = ps2::Ps2::init();
     kprintln!("ps2: keyboard={} mouse={}", ps2.has_keyboard, ps2.has_mouse);
