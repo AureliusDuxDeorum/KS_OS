@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["kernel", "xtask", "crates/ksparse"]
+members = ["kernel", "xtask", "crates/ksparse", "crates/ksbt"]
 
 [workspace.package]
 edition = "2021"
