@@ -6,7 +6,7 @@ use crate::Result;
 use std::io::{Cursor, Write};
 
 const SECTOR: usize = 512;
-const ESP_MIB: usize = 64;
+const ESP_MIB: usize = 32;
 const FIRST_LBA: u64 = 2048;
 
 /// Renders `limine.conf`; `cmdline` is passed to the kernel (empty for production images).

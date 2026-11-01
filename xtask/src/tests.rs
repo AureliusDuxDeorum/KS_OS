@@ -79,7 +79,7 @@ fn test_boot_banner(ctx: &Ctx, image: &Path) -> Result<()> {
     let log = serial(&s);
     kill(s);
     for needle in [
-        "KS_OS 0.1.0 booting",
+        &format!("KS_OS {} booting", env!("CARGO_PKG_VERSION")),
         "OS operating",
         "0 W^X violations",
         "pmm:",

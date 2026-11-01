@@ -478,7 +478,10 @@ pub enum Level {
 pub fn info_line(buf: &mut StrBuf<96>, fb: &Fb, firmware: &str) {
     let _ = write!(
         buf,
-        "KS_OS 0.1.0 | x86_64 | {} | {}x{}",
-        firmware, fb.width, fb.height
+        "KS_OS {} | x86_64 | {} | {}x{}",
+        crate::VERSION,
+        firmware,
+        fb.width,
+        fb.height
     );
 }

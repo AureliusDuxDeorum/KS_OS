@@ -47,6 +47,9 @@ use core::fmt::Write;
 use strbuf::StrBuf;
 use ui::{Action, Level, Ui};
 
+/// Release version, from the workspace manifest (the single source of truth).
+pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+
 /// Kernel entry point, jumped to by Limine in 64-bit long mode.
 ///
 /// Switches from the bootloader's stack to the kernel's own guard-paged stack
@@ -68,7 +71,7 @@ extern "C" fn _start() -> ! {
 
 extern "C" fn kmain() -> ! {
     serial::init();
-    kprintln!("KS_OS 0.1.0 booting");
+    kprintln!("KS_OS {VERSION} booting");
 
     let boot = match boot::BootInfo::collect() {
         Ok(b) => b,

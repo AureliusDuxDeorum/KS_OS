@@ -3,6 +3,8 @@ resolver = "2"
 members = ["kernel", "xtask", "crates/ksparse", "crates/ksbt"]
 
 [workspace.package]
+# The single source of truth for the release version (X.Y.Z, see docs/VERSIONING.md).
+version = "0.1.0"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 publish = false

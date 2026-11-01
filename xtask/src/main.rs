@@ -9,6 +9,8 @@
 //!   run     [--debug] [--headless]
 //!                            boot the image in QEMU with OVMF
 //!   test    [--debug]        automated boot, power-off, UEFI-setup, mouse and exception tests in QEMU
+//!   release                  build KS_OS-vX.Y.Z/ at the repository root: image, checksums, README and
+//!                            the Bluetooth-firmware helper script (no firmware inside)
 //!   image-cmdline <args>     build target/ks_os-cmdline.img whose kernel command line is <args>
 //!                            (e.g. `selftest=page-fault`)
 //!
@@ -19,6 +21,7 @@ mod disk;
 mod firmware;
 mod limine;
 mod qemu;
+mod release;
 mod tests;
 
 use std::path::{Path, PathBuf};
@@ -120,6 +123,7 @@ fn main() -> ExitCode {
     let result = match cmd {
         "build" => build_kernel(&ctx),
         "image" => build_image(&ctx).map(|_| ()),
+        "release" => release::run(&ctx),
         "image-cmdline" => build_kernel(&ctx).and_then(|()| {
             write_image(&ctx, &args[1], &ctx.target_dir().join("ks_os-cmdline.img"))
         }),

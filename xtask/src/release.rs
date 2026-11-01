@@ -1,0 +1,81 @@
+//! `cargo xtask release`: assembles a clearly named, self-contained release folder at the
+//! repository root (`KS_OS-vX.Y.Z/`) with the boot image, checksums and instructions.
+//!
+//! The release image never contains firmware blobs (they cannot be redistributed); the shipped
+//! script adds them on the user's own machine.
+
+use crate::{build_kernel, write_image, Ctx, Result};
+use sha2::{Digest, Sha256};
+use std::fmt::Write as _;
+use std::path::Path;
+
+const README: &str = include_str!("../release/README.txt.in");
+const ADD_FIRMWARE: &str = include_str!("../release/add-bluetooth-firmware.sh");
+
+fn sha256_hex(data: &[u8]) -> String {
+    Sha256::digest(data).iter().fold(String::new(), |mut s, b| {
+        let _ = write!(s, "{b:02x}");
+        s
+    })
+}
+
+pub fn run(ctx: &Ctx) -> Result<()> {
+    let version = env!("CARGO_PKG_VERSION");
+    let name = format!("KS_OS-v{version}");
+    let dir = ctx.root.join(&name);
+    // A release is always an optimised build with no firmware and no kernel command line.
+    let clean = Ctx {
+        root: ctx.root.clone(),
+        release: true,
+        firmware: Vec::new(),
+    };
+    build_kernel(&clean)?;
+    std::fs::create_dir_all(&dir)?;
+
+    let img_name = format!("{name}.img");
+    write_image(&clean, "", &dir.join(&img_name))?;
+
+    std::fs::write(dir.join("README.txt"), README.replace("{version}", version))?;
+    std::fs::write(dir.join("add-bluetooth-firmware.sh"), ADD_FIRMWARE)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(
+            dir.join("add-bluetooth-firmware.sh"),
+            std::fs::Permissions::from_mode(0o755),
+        )?;
+    }
+    let limine_license = std::fs::read_to_string(ctx.target_dir().join("limine").join("LICENSE"))
+        .unwrap_or_default();
+    std::fs::write(
+        dir.join("LICENSES.txt"),
+        format!(
+            "Third-party components inside {img_name}\n=======================================\n\n\
+             Limine bootloader (BOOTX64.EFI), https://github.com/limine-bootloader/limine\n\
+             Pinned commit and checksum: see xtask/src/limine.rs\n\n{limine_license}\n\n\
+             The KS_OS kernel itself uses Rust crates under MIT or Apache-2.0 licences (see Cargo.lock).\n"
+        ),
+    )?;
+
+    let mut sums = String::new();
+    for f in [
+        img_name.as_str(),
+        "add-bluetooth-firmware.sh",
+        "README.txt",
+        "LICENSES.txt",
+    ] {
+        let _ = writeln!(
+            sums,
+            "{}  {f}",
+            sha256_hex(&std::fs::read(Path::new(&dir).join(f))?)
+        );
+    }
+    std::fs::write(dir.join("SHA256SUMS"), sums)?;
+    println!("release: {}", dir.display());
+    println!(
+        "         {} ({} bytes)",
+        img_name,
+        std::fs::metadata(dir.join(&img_name))?.len()
+    );
+    Ok(())
+}

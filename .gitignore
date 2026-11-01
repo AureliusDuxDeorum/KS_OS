@@ -3,6 +3,8 @@
 /out/
 *.iso
 *.img
+# ...except the boot image inside a release folder at the repository root.
+!/KS_OS-v*/KS_OS-v*.img
 *.log
 .vscode/
 .idea/
