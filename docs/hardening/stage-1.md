@@ -72,14 +72,14 @@ All `unsafe` blocks carry a `// SAFETY:` justification; this is enforced by
 | R4 | No KASLR | Evaluate with relocatable kernel in Stage 2/3 | no |
 | R5 | No compiler-level CFI/stack-protector | Re-evaluate toolchain options at gate G2 | no |
 | R6 | PS/2-only input (USB-only machines cannot press the buttons) | USB HID driver in Stage 5; interrupt-driven PS/2 in Stage 2 | no |
-| R7 | `\_S5` found by DSDT byte-scan, not AML interpretation | AML interpreter with the driver framework | no |
+| R7 | `\_S5` found by DSDT byte-scan, not AML interpretation | **DECIDED 2026-11-01** (ADR-0023): no AML interpreter until a concrete need; scan stays, now in the fuzzed `ksparse` crate | no |
 | R8 | CI workflow has not yet run on GitHub | Confirm first run is green; pin actions by SHA | **yes** (before gate closes) |
-| R9 | No host-side fuzzing of ACPI/EFI table parsers | Factor parsers into a host-testable crate and fuzz | **yes** (before gate closes) |
+| R9 | No host-side fuzzing of ACPI/EFI table parsers | **RESOLVED 2026-11-01** (S2.P4, ADR-0023): ACPI, PCI and UEFI (memory map, config tables, MAT, W^X policy) parsing lives in `ksparse` with mutation/noise tests and a libFuzzer target (4.1 M executions / 91 s, no crash, run in CI). Moving the EFI code also fixed unchecked firmware-supplied counts and region sizes | no |
 
 ## 6. Decision
 Waiver recorded in [ADR-0013](../adr/0013-stage-2-scope.md): Stage 2 may start; R3, R8, R9 are rescheduled into Stage 2 phases and Gate G2 cannot close while they are open.
 
-Gate **not yet closed**. To close: resolve R8 and R9 (R3 done) (or accept a waiver ADR),
+Gate **not yet closed**. To close: resolve R8 — the first green GitHub Actions run (R3, R9 done) (or accept a waiver ADR),
 then change **Status** to CLOSED and update `docs/ROADMAP.md`.
 
 ## 7. Addendum (2026-11-01, during S2.P3)
@@ -89,3 +89,12 @@ then change **Status** to CLOSED and update `docs/ROADMAP.md`.
   entries now fall back to the region type's default; the audit reports zero violations and
   runs on every boot and in CI.
 - **x2APIC is unverified** in this environment (see ADR-0021); xAPIC is the default.
+
+## 8. Addendum (2026-11-01, S2.P4)
+- Fuzzing: `cargo +nightly fuzz run parsers` — 4,103,168 executions in 91 s, no crashes, corpus grew
+  to cover MADT/MCFG/FADT/DSDT/RSDP/EFI/PCI paths. CI now runs a 60 s fuzz job.
+- Hardening found while moving the EFI parsing: firmware-supplied `number_of_table_entries` was
+  multiplied unchecked (could wrap and lead to an out-of-bounds read) and descriptor page counts
+  were not range-checked. Both are now rejected by `ksparse::efi`.
+- **IOMMU (VT-d/AMD-Vi) is detected but not enforced**: DMA-capable devices are trusted. Enforcement
+  is a Gate G2 item before any untrusted-device exposure.

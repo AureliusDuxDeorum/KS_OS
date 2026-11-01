@@ -26,3 +26,4 @@ Process: [ADR-0001](0001-record-architecture-decisions.md). Template: [template.
 | [0020](0020-memory-management.md) | Physical memory manager, kernel-owned address space and heap | Accepted |
 | [0021](0021-interrupts-and-timekeeping.md) | Interrupt architecture and timekeeping | Accepted |
 | [0022](0022-project-vision-and-end-goal.md) | Project vision and end goal | Accepted |
+| [0023](0023-acpi-pci-and-untrusted-parsers.md) | ACPI/PCI discovery, untrusted-data parsers and the AML decision | Accepted |
