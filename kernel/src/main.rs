@@ -13,14 +13,17 @@ mod acpi;
 mod apic;
 mod arch;
 mod boot;
+mod dma;
 mod efi;
 mod fb;
 mod frames;
 mod gdt;
 mod heap;
 mod idt;
+mod input;
 mod ioapic;
 mod irq;
+mod klog;
 mod limine;
 pub use ksparse::madt;
 mod msi;
@@ -35,6 +38,7 @@ mod strbuf;
 mod sync;
 mod time;
 mod ui;
+mod usb;
 mod vmm;
 
 use core::fmt::Write;
@@ -199,6 +203,9 @@ extern "C" fn kmain() -> ! {
     arch::sti();
     kprintln!("irq: interrupts enabled");
 
+    // USB: xHCI controllers, hubs and HID devices.
+    usb::init(&boot);
+
     if let Some(test) = selftest::requested(boot.cmdline) {
         selftest::run(test, &boot);
     }
@@ -216,7 +223,7 @@ extern "C" fn kmain() -> ! {
     ui::info_line(&mut info, &fb, "UEFI");
     let setup_ok = efi.as_ref().is_some_and(|e| e.firmware_setup_supported());
     fb::register_fatal_fb(fb.clone());
-    let mut ui = Ui::new(fb, setup_ok, ps2.has_mouse);
+    let mut ui = Ui::new(fb, setup_ok, ps2.has_mouse || usb::hid::has_pointer());
     ui.draw_all(info.as_str());
     ui.describe();
     kprintln!("ui: ready");
@@ -267,6 +274,10 @@ extern "C" fn kmain() -> ! {
 /// Routes the keyboard (ISA IRQ 1) and mouse (ISA IRQ 12) lines through the I/O APIC
 /// and switches the controller to interrupt-driven mode; stays in polling mode on failure.
 fn route_ps2_irqs(madt: &madt::Madt, ps2: &mut ps2::Ps2) {
+    if !ps2.has_keyboard && !ps2.has_mouse {
+        kprintln!("ps2: no controller or devices present");
+        return;
+    }
     let dest = apic::id();
     for (irq_line, enabled) in [(1u8, ps2.has_keyboard), (12u8, ps2.has_mouse)] {
         if !enabled {

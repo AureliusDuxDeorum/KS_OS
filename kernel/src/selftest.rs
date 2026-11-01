@@ -6,7 +6,7 @@
 use crate::arch;
 use crate::boot::BootInfo;
 use crate::madt::{self, MadtError};
-use crate::{apic, heap, irq, msi, pci, pmm, time, vmm};
+use crate::{apic, heap, irq, msi, pci, pmm, time, usb, vmm};
 use alloc::boxed::Box;
 use alloc::collections::BTreeMap;
 use alloc::string::String;
@@ -66,6 +66,9 @@ pub fn run(name: &str, boot: &BootInfo) {
             kprintln!("selftest: ps2 irq count {}", crate::ps2::irq_count());
             crate::time::sleep_ms(20);
         }
+        "usb" => test_usb(),
+        "usb-hid" => test_usb_hid(),
+        "usb-bot" => test_usb_bot(),
         "pci" => test_pci(),
         "pci-edu" => test_pci_edu(boot),
         "pci-msix" => test_pci_msix(boot),
@@ -680,4 +683,106 @@ impl ksparse::pci::Config for PciCfg {
     fn read32(&self, offset: u16) -> u32 {
         pci::read32(self.0, offset)
     }
+}
+
+fn test_usb() {
+    let devs = usb::devices();
+    check(
+        devs.len() >= 4,
+        "hub, keyboard, mouse and a keyboard behind the hub were enumerated",
+    );
+    check(
+        devs.iter().any(|d| d.parent.is_some()),
+        "a device behind a hub was enumerated through its route string",
+    );
+    check(
+        devs.iter()
+            .all(|d| d.descriptor.num_configs >= 1 && !d.config.interfaces.is_empty()),
+        "every device has a parsed configuration",
+    );
+    check(usb::hid::has_pointer(), "a relative pointer is bound");
+    kprintln!("selftest: usb ok ({} devices)", devs.len());
+}
+
+fn test_usb_hid() {
+    use crate::input::{self, Event, Key};
+    kprintln!("selftest: usb-hid ready");
+    let (mut key, mut mouse) = (false, false);
+    let t0 = time::now_ns();
+    while !(key && mouse) && time::now_ns() - t0 < 30_000_000_000 {
+        match input::pop() {
+            Some(Event::Key(Key::Char(b'p'))) => {
+                kprintln!("selftest:   ok  USB keyboard 'p' arrived through interrupt endpoint + report decoding");
+                key = true;
+            }
+            Some(Event::Mouse { dx, dy, .. }) if dx > 0 && dy > 0 => {
+                kprintln!("selftest:   ok  USB mouse motion dx={dx} dy={dy} arrived");
+                mouse = true;
+            }
+            Some(_) => {}
+            None => arch::enable_and_halt(),
+        }
+    }
+    check(key, "keyboard report received");
+    check(mouse, "mouse report received");
+    kprintln!(
+        "selftest: usb-hid ok ({} reports)",
+        usb::hid::reports_seen()
+    );
+}
+
+fn test_usb_bot() {
+    use crate::usb::xhci;
+    use ksparse::usb::TransferKind;
+    let (d, iface) =
+        usb::find_interface(8, 6, 0x50).expect("USB mass-storage (bulk-only) interface");
+    let ep = |inward: bool| {
+        iface
+            .endpoints
+            .iter()
+            .copied()
+            .find(|e| e.kind() == TransferKind::Bulk && e.is_in() == inward)
+            .expect("bulk endpoint")
+    };
+    let (out_ep, in_ep) = (ep(false), ep(true));
+    let cfg = |e: ksparse::usb::Endpoint| xhci::EndpointConfig {
+        dci: e.dci(),
+        kind: e.kind(),
+        is_in: e.is_in(),
+        max_packet: e.packet_size(),
+        max_burst: e.max_burst,
+        interval: e.interval,
+    };
+    xhci::configure_endpoints(d.dev, &[cfg(out_ep), cfg(in_ep)], None)
+        .expect("configure bulk endpoints");
+    let mut buf = xhci::alloc_buffer(d.dev, 4096).expect("DMA buffer");
+    // Command Block Wrapper: READ(10), LBA 0, one 512-byte block.
+    let mut cbw = [0u8; 31];
+    cbw[0..4].copy_from_slice(&0x4342_5355u32.to_le_bytes()); // 'USBC'
+    cbw[4..8].copy_from_slice(&0xC0DE_0001u32.to_le_bytes()); // tag
+    cbw[8..12].copy_from_slice(&512u32.to_le_bytes());
+    cbw[12] = 0x80; // device-to-host
+    cbw[14] = 10; // command length
+    cbw[15] = 0x28; // READ(10)
+    cbw[22] = 1; // transfer length (blocks), big-endian at bytes 22..24
+    buf.as_mut_slice()[..31].copy_from_slice(&cbw);
+    let sent = xhci::transfer(d.dev, out_ep.dci(), buf.phys, 31, 2000).expect("send CBW");
+    check(sent == 31, "CBW goes out on the bulk OUT endpoint");
+    let got = xhci::transfer(d.dev, in_ep.dci(), buf.phys, 512, 2000).expect("read data stage");
+    check(got == 512, "512 bytes arrive on the bulk IN endpoint");
+    let ok = buf.as_slice().starts_with(b"KSOS-USB-BOT-TEST")
+        && (17..512).all(|i| buf.as_slice()[i] == (i as u8).wrapping_mul(3));
+    check(ok, "sector 0 holds exactly what the test image contains");
+    let n = xhci::transfer(d.dev, in_ep.dci(), buf.phys, 13, 2000).expect("read CSW");
+    let csw = &buf.as_slice()[..13];
+    check(
+        n == 13 && csw[0..4] == 0x5342_5355u32.to_le_bytes(),
+        "Command Status Wrapper arrives with its signature",
+    );
+    check(
+        csw[4..8] == 0xC0DE_0001u32.to_le_bytes() && csw[12] == 0,
+        "CSW echoes the tag and reports success",
+    );
+    buf.free();
+    kprintln!("selftest: usb-bot ok");
 }

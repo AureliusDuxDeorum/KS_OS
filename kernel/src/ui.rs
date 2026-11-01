@@ -4,7 +4,8 @@
 //! the `P` and `U` accelerators) or the PS/2 mouse.
 
 use crate::fb::{Color, Fb};
-use crate::ps2::{Event, Key, Ps2};
+use crate::input::{Event, Key};
+use crate::ps2::Ps2;
 use crate::strbuf::StrBuf;
 use core::fmt::Write;
 
@@ -175,9 +176,9 @@ impl Ui {
         self.fb
             .draw_text_centered(h / 5 + 22 * s, info, s, GRAY_MID);
         let hint = if self.has_mouse {
-            "Click a button, or Tab / arrows + Enter.  P = power off, U = UEFI setup"
+            "Click a button, or Tab / arrows + Enter.  P = power off, U = UEFI setup, L = log"
         } else {
-            "Tab / arrows + Enter.  P = power off, U = UEFI setup"
+            "Tab / arrows + Enter.  P = power off, U = UEFI setup, L = log"
         };
         self.fb
             .draw_text_centered(h - 14 * s, hint, (s / 2).max(1), GRAY_MID);
@@ -320,11 +321,45 @@ impl Ui {
         Some(self.buttons[i].action)
     }
 
+    /// Full-screen kernel log; any of L / Esc / Enter / Space returns to the main screen.
+    fn show_log(&mut self, ps2: &mut Ps2) {
+        self.hide_cursor();
+        let scale = if self.fb.width >= 1024 { 2 } else { 1 };
+        let (w, h) = (self.fb.width as i32, self.fb.height as i32);
+        let cols = (w / (8 * scale) - 2).max(8) as usize;
+        let rows = (h / (8 * scale + 2) - 2).max(4) as usize;
+        self.fb.fill_rect(0, 0, w, h, BLACK);
+        self.fb.fill_rect(0, 0, w, 8 * scale + 4, WHITE);
+        self.fb
+            .draw_text(8, 2, "KERNEL LOG - L / Esc / Enter to return", scale, BLACK);
+        for (i, line) in crate::klog::tail(rows, cols).iter().enumerate() {
+            self.fb.draw_text(
+                8,
+                (10 * scale + 4) + i as i32 * (8 * scale + 2),
+                line,
+                scale,
+                GRAY_LIGHT,
+            );
+        }
+        loop {
+            match ps2.poll().or_else(crate::input::pop) {
+                Some(Event::Key(Key::Char(b'l') | Key::Escape | Key::Enter | Key::Space)) => break,
+                Some(_) => {}
+                None => crate::arch::enable_and_halt(),
+            }
+        }
+        // Redraw the main screen.
+        let mut info = StrBuf::<96>::new();
+        info_line(&mut info, &self.fb, "UEFI");
+        self.draw_all(info.as_str());
+        self.show_cursor();
+    }
+
     /// Blocks until the user activates a button and returns the chosen action.
     pub fn run(&mut self, ps2: &mut Ps2) -> Action {
         self.refresh_buttons();
         loop {
-            let Some(ev) = ps2.poll() else {
+            let Some(ev) = ps2.poll().or_else(crate::input::pop) else {
                 // Sleep until the next interrupt (input or the 1 kHz tick).
                 crate::arch::enable_and_halt();
                 continue;
@@ -342,6 +377,10 @@ impl Ui {
                         }
                         Key::Char(b'p') => return Action::PowerOff,
                         Key::Char(b'u') => return Action::BootToFirmware,
+                        Key::Char(b'l') => {
+                            self.show_log(ps2);
+                            continue;
+                        }
                         _ => continue,
                     }
                     self.refresh_buttons();

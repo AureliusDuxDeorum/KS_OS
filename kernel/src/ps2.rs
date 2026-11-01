@@ -6,6 +6,7 @@
 
 use crate::arch::{inb, outb};
 use crate::idt::TrapFrame;
+use crate::input::{Event, Key};
 use core::sync::atomic::{AtomicU16, AtomicUsize, Ordering};
 
 const DATA: u16 = 0x60;
@@ -144,32 +145,6 @@ fn device_write(mouse: bool, b: u8) -> bool {
     false
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum Key {
-    Tab,
-    BackTab,
-    Left,
-    Right,
-    Up,
-    Down,
-    Enter,
-    Space,
-    Escape,
-    /// Lower-case ASCII letter.
-    Char(u8),
-}
-
-#[derive(Clone, Copy, Debug)]
-pub enum Event {
-    Key(Key),
-    /// Relative mouse motion (y grows downwards) and the left-button state.
-    Mouse {
-        dx: i32,
-        dy: i32,
-        left: bool,
-    },
-}
-
 pub struct Ps2 {
     pub has_keyboard: bool,
     pub has_mouse: bool,
@@ -193,6 +168,11 @@ impl Ps2 {
             idx: 0,
         };
 
+        // No controller at all (USB-only machines float the bus high): leave everything off.
+        // SAFETY: reading the i8042 status register.
+        if unsafe { inb(CMD) } == 0xFF {
+            return s;
+        }
         flush();
         command(0xAD); // disable keyboard port
         command(0xA7); // disable mouse port
@@ -237,15 +217,18 @@ impl Ps2 {
 
     /// Returns one decoded event, if any input is pending.
     pub fn poll(&mut self) -> Option<Event> {
-        loop {
+        if !self.has_keyboard && !self.has_mouse {
+            return None; // no controller: the status port floats high and would look "always full"
+        }
+        for _ in 0..64 {
             let (aux, b) = if self.irq {
                 let v = ring_pop()?;
                 (v >> 8 != 0, v as u8)
             } else {
                 // SAFETY: reading the status register.
                 let st = unsafe { inb(CMD) };
-                if st & ST_OUT_FULL == 0 {
-                    return None;
+                if st == 0xFF || st & ST_OUT_FULL == 0 {
+                    return None; // 0xFF: bus floating high, no device behind the port
                 }
                 // SAFETY: output buffer full.
                 (st & ST_AUX != 0, unsafe { inb(DATA) })
@@ -259,6 +242,7 @@ impl Ps2 {
                 return ev;
             }
         }
+        None
     }
 
     fn mouse_byte(&mut self, b: u8) -> Option<Event> {
@@ -318,6 +302,7 @@ impl Ps2 {
                 0x39 => Key::Space,
                 0x19 => Key::Char(b'p'),
                 0x16 => Key::Char(b'u'),
+                0x26 => Key::Char(b'l'),
                 _ => return None,
             }
         };

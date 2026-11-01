@@ -53,7 +53,16 @@ pub fn init() {
 
 #[doc(hidden)]
 pub fn _print(args: fmt::Arguments<'_>) {
-    let _ = SERIAL.lock().write_fmt(args);
+    /// Sends everything to both the UART and the in-memory log, whatever the length.
+    struct Tee<'a>(&'a mut Serial);
+    impl Write for Tee<'_> {
+        fn write_str(&mut self, s: &str) -> fmt::Result {
+            crate::klog::append(s);
+            self.0.write_str(s)
+        }
+    }
+    let mut guard = SERIAL.lock();
+    let _ = Tee(&mut guard).write_fmt(args);
 }
 
 /// Prints from the panic path without risking a deadlock on the serial lock.
