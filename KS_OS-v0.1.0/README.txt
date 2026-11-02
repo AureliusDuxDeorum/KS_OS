@@ -10,7 +10,8 @@ What is in this folder
   KS_OS-v0.1.0.img        the bootable disk image (this is the file you write to a USB stick)
   add-bluetooth-firmware.sh   adds Bluetooth firmware to the image (see below)
   SHA256SUMS                  checksums:  sha256sum -c SHA256SUMS
-  LICENSES.txt                licences of third-party parts that are inside the image
+  LICENSE, NOTICE             the KS_OS licence (Apache-2.0) and its notice
+  THIRD-PARTY-LICENSES.txt    licences of every third-party part that is inside the image
   README.txt                  this file
 
 Write it to a USB stick (this ERASES the stick)
@@ -52,4 +53,5 @@ Press L (or let the diagnostic screen run) and photograph the log. The lines sta
 
 Licence
 -------
-KS_OS licence: to be decided by the project owner. See LICENSES.txt for third-party components.
+KS_OS is licensed under the Apache License 2.0 (see LICENSE and NOTICE). The names "KS" and "KS_OS" and
+the KS logos are not covered by that licence. Third-party components: THIRD-PARTY-LICENSES.txt.

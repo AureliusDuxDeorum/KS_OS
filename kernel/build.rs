@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! Passes the kernel linker script to the linker.
 fn main() {
     let dir = std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR");
