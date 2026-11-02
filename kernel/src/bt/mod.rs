@@ -40,6 +40,22 @@ const BONDS_NAME: [u16; 14] = efi::utf16("KSOS-BT-BONDS");
 /// Without it, anyone in radio range could pair a fake keyboard (ADR-0030 S-01).
 static PAIR_UNTIL_MS: AtomicU64 = AtomicU64::new(0);
 
+/// Owner override (key `J`): accept Just Works from keyboards during the current window.
+static JUST_WORKS_OK: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+
+/// Allows (or forbids) unauthenticated pairing of keyboards for the current pairing window.
+pub fn allow_just_works(allow: bool) {
+    JUST_WORKS_OK.store(allow, Ordering::Relaxed);
+    kprintln!(
+        "bt: Just Works for keyboards {}",
+        if allow {
+            "ALLOWED by the user for this pairing window (no MITM protection)"
+        } else {
+            "refused"
+        }
+    );
+}
+
 fn now_ms() -> u64 {
     time::now_ns() / 1_000_000
 }
@@ -308,6 +324,9 @@ impl Manager {
         let candidates = core::mem::take(&mut self.candidates);
         let now = self.now();
         let window = pairing_window_open();
+        if !window {
+            JUST_WORKS_OK.store(false, Ordering::Relaxed); // the override never outlives its window
+        }
         let info: Vec<(Candidate, hci::AdvInfo)> = candidates
             .iter()
             .map(|r| {
@@ -345,7 +364,12 @@ impl Manager {
                     }
                 }
                 Err(e) => {
-                    set_status(alloc::format!("{label}: {e}"));
+                    let hint = if e.contains("only offers Just Works") {
+                        " - press J to allow it for this pairing window (not MITM-protected)"
+                    } else {
+                        ""
+                    };
+                    set_status(alloc::format!("{label}: {e}{hint}"));
                     let t = self.now();
                     self.policy.failed(r.address, t);
                 }
@@ -379,14 +403,22 @@ impl Manager {
                 None => {
                     let cfg = PairingConfig {
                         io_capability: io::DISPLAY_ONLY,
+                        require_mitm: ksbt::policy::requires_mitm(adv.appearance)
+                            && !JUST_WORKS_OK.load(Ordering::Relaxed),
                         bonding: true,
                         local: self.local,
                         peer: r.address,
                     };
                     let mut keys = {
                         let mut link = self.host.smp(handle);
-                        smp::pair(&mut link, &mut KernelUi, &mut HwRng, &cfg)
-                            .map_err(|e| alloc::format!("pairing failed ({e:?})"))?
+                        smp::pair(&mut link, &mut KernelUi, &mut HwRng, &cfg).map_err(
+                            |e| match e {
+                                smp::PairError::Aborted(_, why) => {
+                                    alloc::format!("pairing refused: {why}")
+                                }
+                                other => alloc::format!("pairing failed ({other:?})"),
+                            },
+                        )?
                     };
                     self.host
                         .start_encryption(handle, keys.ltk)

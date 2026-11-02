@@ -87,3 +87,15 @@ fn connected_devices_are_not_retried_and_cooldown_memory_is_bounded() {
     assert!(p.cooling_down(&addr(255), 1));
     assert!(!p.cooling_down(&addr(0), 1));
 }
+
+#[test]
+fn only_a_positively_identified_mouse_may_use_just_works() {
+    use ksbt::policy::{requires_mitm, APPEARANCE_KEYBOARD, APPEARANCE_MOUSE};
+    assert!(!requires_mitm(Some(APPEARANCE_MOUSE)));
+    assert!(requires_mitm(Some(APPEARANCE_KEYBOARD)));
+    assert!(requires_mitm(Some(0x03C0)), "generic HID may type");
+    assert!(
+        requires_mitm(None),
+        "unknown devices are treated as keyboards"
+    );
+}

@@ -55,6 +55,7 @@ fn ui(shared: &Rc<Shared>) -> Ui {
 fn cfg(io_capability: u8) -> PairingConfig {
     PairingConfig {
         io_capability,
+        require_mitm: false,
         bonding: true,
         local: HOST_ADDR,
         peer: PERIPH_ADDR,
@@ -469,4 +470,60 @@ fn l2cap_reassembly_handles_fragments_and_garbage() {
     let huge = [0xFF, 0xFF, 4, 0, 1, 2];
     let (h, _) = hci::parse_acl(&pkts[0]).unwrap();
     assert!(Reassembler::default().push(&h, &huge).is_none());
+}
+
+fn strict(c: PairingConfig) -> PairingConfig {
+    PairingConfig {
+        require_mitm: true,
+        ..c
+    }
+}
+
+#[test]
+fn strict_pairing_refuses_a_keyboard_that_only_offers_just_works() {
+    let (mut host, shared) = setup(Behaviour::Normal, io::NO_INPUT_NO_OUTPUT);
+    let h = connect(&mut host);
+    let r = smp::pair(
+        &mut host.smp(h),
+        &mut ui(&shared),
+        &mut TestRng(3),
+        &strict(cfg(io::DISPLAY_ONLY)),
+    );
+    match r {
+        Err(PairError::Aborted(code, why)) => {
+            assert_eq!(code, smp::reason::AUTHENTICATION_REQUIREMENTS);
+            assert!(why.contains("Just Works"));
+        }
+        other => panic!("expected refusal, got {:?}", other.map(|k| k.method)),
+    }
+}
+
+#[test]
+fn strict_pairing_accepts_passkey_entry() {
+    let (mut host, shared) = setup(Behaviour::Normal, io::KEYBOARD_ONLY);
+    let h = connect(&mut host);
+    let keys = smp::pair(
+        &mut host.smp(h),
+        &mut ui(&shared),
+        &mut TestRng(4),
+        &strict(cfg(io::DISPLAY_ONLY)),
+    )
+    .expect("authenticated pairing");
+    assert!(keys.authenticated);
+    assert_eq!(keys.method, Method::PasskeyDisplay);
+}
+
+#[test]
+fn non_strict_pairing_still_allows_just_works_for_mice() {
+    let (mut host, shared) = setup(Behaviour::Normal, io::NO_INPUT_NO_OUTPUT);
+    let h = connect(&mut host);
+    let keys = smp::pair(
+        &mut host.smp(h),
+        &mut ui(&shared),
+        &mut TestRng(5),
+        &cfg(io::DISPLAY_ONLY),
+    )
+    .unwrap();
+    assert_eq!(keys.method, Method::JustWorks);
+    assert!(!keys.authenticated);
 }

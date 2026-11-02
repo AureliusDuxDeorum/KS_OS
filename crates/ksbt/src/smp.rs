@@ -29,6 +29,7 @@ pub const PAIRING_DHKEY_CHECK: u8 = 0x0D;
 /// Pairing Failed reasons.
 pub mod reason {
     pub const PASSKEY_ENTRY_FAILED: u8 = 0x01;
+    pub const AUTHENTICATION_REQUIREMENTS: u8 = 0x03;
     pub const CONFIRM_VALUE_FAILED: u8 = 0x04;
     pub const PAIRING_NOT_SUPPORTED: u8 = 0x05;
     pub const ENCRYPTION_KEY_SIZE: u8 = 0x06;
@@ -121,6 +122,9 @@ impl From<LinkError> for PairError {
 
 pub struct PairingConfig {
     pub io_capability: u8,
+    /// Refuse to pair unless the method protects against a man-in-the-middle (everything but
+    /// Just Works). Used for devices that type on our behalf (ADR-0030 S-13).
+    pub require_mitm: bool,
     pub bonding: bool,
     pub local: Address,
     pub peer: Address,
@@ -237,6 +241,13 @@ pub fn pair(
     }
     let mitm = auth_req & AUTH_MITM != 0 && peer_auth & AUTH_MITM != 0;
     let method = select_method(cfg.io_capability, peer_io, mitm);
+    if cfg.require_mitm && method == Method::JustWorks {
+        return abort(
+            link,
+            reason::AUTHENTICATION_REQUIREMENTS,
+            "authenticated pairing required but the peer only offers Just Works",
+        );
+    }
 
     // --- Phase 2: public key exchange ---
     let key = EphemeralKey::generate(rng);

@@ -14,6 +14,18 @@ pub const COOLDOWN_MS: u64 = 60_000;
 /// More cooldown entries than this are never needed; oldest are dropped (bounded memory).
 const MAX_COOLDOWNS: usize = 64;
 
+/// GAP appearance values (Bluetooth Assigned Numbers) of HID devices.
+pub const APPEARANCE_KEYBOARD: u16 = 0x03C1;
+pub const APPEARANCE_MOUSE: u16 = 0x03C2;
+
+/// Whether pairing with a device must be authenticated (passkey / numeric comparison).
+///
+/// Anything that can type is a keystroke-injection channel, so it must be MITM-protected. Only a
+/// device that positively identifies as a mouse may use Just Works. Unknown => strict.
+pub fn requires_mitm(appearance: Option<u16>) -> bool {
+    appearance != Some(APPEARANCE_MOUSE)
+}
+
 /// What the scan saw, reduced to what the policy needs.
 #[derive(Clone, Copy, Debug)]
 pub struct Candidate {

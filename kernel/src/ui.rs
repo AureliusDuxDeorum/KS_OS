@@ -438,6 +438,14 @@ impl Ui {
                             );
                             continue;
                         }
+                        Key::Char(b'j') if crate::bt::available() => {
+                            crate::bt::allow_just_works(true);
+                            self.set_status(
+                                "Just Works allowed for keyboards in this pairing window",
+                                Level::Info,
+                            );
+                            continue;
+                        }
                         _ => continue,
                     }
                     self.refresh_buttons();

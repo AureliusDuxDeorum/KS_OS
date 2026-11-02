@@ -128,6 +128,7 @@ pub fn exercise(bytes: &[u8]) {
     let _ = hogp::HogpDevice::setup(&mut link, 23);
     let cfg = PairingConfig {
         io_capability: smp::io::KEYBOARD_DISPLAY,
+        require_mitm: bytes.first().is_some_and(|b| b & 1 == 1),
         bonding: true,
         local: Address::new(0, [1; 6]),
         peer: Address::new(0, [2; 6]),
