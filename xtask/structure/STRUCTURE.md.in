@@ -1,0 +1,117 @@
+# KS_OS — structure and platform reference
+
+> **For humans and coding agents.** Hand this single file to any assistant before it touches the code.
+> It states what the OS is, what it provides, what it does **not** provide yet, the conventions that are
+> enforced, and where everything lives. Sections marked *(generated)* are rewritten by
+> `cargo xtask structure`; CI fails if this file is stale (`cargo xtask structure --check`).
+> Hand-written text lives in `xtask/structure/STRUCTURE.md.in` — edit that, not this file.
+
+- **Version:** {{VERSION}} (`X.Y.Z`: X = finished (0/1), Y = version, Z = bug patch — `docs/VERSIONING.md`)
+- **Repository:** `AureliusDuxDeorum/KS_OS` · **Licence:** Apache-2.0 (the KS name and logos are not licensed, `TRADEMARKS.md`)
+- **Owner:** Nils Seidenberg · **Process:** Stages → Phases → Steps, a hardening gate between stages, every
+  decision recorded as an ADR in `docs/adr/` · Conventional Commits, one logical change per commit.
+
+## 1. What KS_OS is
+
+A private, from-scratch, **capability-based microkernel OS** for **x86_64 + UEFI**, written in **Rust**
+(plus minimal inline assembly). **Long-term goal ([ADR-0022](docs/adr/0022-project-vision-and-end-goal.md)):**
+a fully capable desktop OS — Ubuntu-level polish, a monochrome "cybercore" design based on KS branding
+(design rundown to be supplied by the owner at the UI phase), Arch-level openness — able to run demanding
+developer applications such as coding agents (Claude Code). The project stays open until that is reached.
+
+**Today (v0.x) it is a kernel only.** There is no user mode, no scheduler, no filesystem and no libc yet.
+Everything runs in ring 0 in one address space, driven by a single boot CPU and a polled idle loop.
+
+## 2. Platform facts an agent must not guess
+
+| Topic | Fact |
+|---|---|
+| Architecture | x86_64 only, long mode, 4-level paging (no 5-level), single CPU in use (APs not started) |
+| Firmware / boot | UEFI only. **Limine v11** (pinned commit, SHA-256 verified), boot protocol **base revision 5**; Limine bindings are hand-written (`kernel/src/limine.rs`) because the `limine` crate needs nightly |
+| Image | GPT disk, 32 MiB FAT ESP built by `cargo xtask image`; `\EFI\BOOT\BOOTX64.EFI`, `limine.conf`, `kernel.elf`, optional firmware blobs as Limine modules |
+| Toolchain | Rust **stable 1.97.0**, pinned in `rust-toolchain.toml`; target `x86_64-unknown-none`; `#![no_std]` + `alloc`; no nightly features in the main build (fuzzing under `fuzz/` uses nightly separately) |
+| Linking | Static, non-PIE, higher half at `0xffffffff80000000`, W^X segments (`kernel/linker.ld`, `.cargo/config.toml`) |
+| Memory | Limine HHDM gives direct map of RAM (`BootInfo::hhdm`); bitmap frame allocator (`pmm`, supports contiguous DMA runs); kernel-owned page tables (`vmm`/`paging`) with strict **W^X** and PAT (write-combining framebuffer, uncached MMIO window in PML4 slot reserved for `vmm::map_mmio`); slab heap (`heap`) behind `alloc` |
+| Interrupts | Own GDT/TSS/IDT, IST stacks for #DF/NMI/#MC, guard-paged stacks; xAPIC (x2APIC opt-in `apic=x2`, untested), IOAPIC via MADT, MSI/MSI-X, 1 kHz tick, TSC calibrated from the ACPI PM timer |
+| Concurrency | No threads or scheduler. `sync::IrqMutex` (spin + IRQ disable) protects state shared with interrupt handlers. Drivers are **polled from the UI idle loop** (`ui.rs`) |
+| Firmware services | UEFI runtime services relocated with `SetVirtualAddressMap` (Memory Attributes Table W^X policy); ACPI S5 power-off; reboot-to-firmware-setup via `OsIndications` |
+| Input | PS/2 (interrupt-driven), USB HID via xHCI (hubs, full report-descriptor parser), Bluetooth LE HID-over-GATT; all feed `input::Event` queue |
+| Network | Intel igc (I225/I226) + igb (QEMU), virtio-net; smoltcp stack: DHCPv4, DNS (A), ICMP echo, TCP client/listen; IPv4 only; **no UDP/TCP socket API for applications yet** (kernel-internal `net::with`) |
+| Bluetooth | USB controllers; MediaTek MT7921 bring-up (experimental), HCI/L2CAP/ATT/GATT/SMP (LE Secure Connections only)/HOGP; Classic BR/EDR **not** implemented; bonds in UEFI NV variable `KSOS-BT-BONDS` (unencrypted — known gap) |
+| Graphics | UEFI GOP linear framebuffer only (`fb.rs`), 8x8 bitmap font, monochrome placeholder UI. No GPU driver, no compositor |
+| Storage | Only USB bulk-only mass storage *transport test*. No block layer, filesystem or persistent storage yet |
+| Randomness | `rng`: RDSEED/RDRAND only for keys (no software fallback); `rng::network_seed` may fall back to TSC mixing for non-cryptographic use |
+| Security gaps (tracked) | IOMMU not enabled (DMA unrestricted); Bluetooth bonds unencrypted; no user/kernel separation yet — see `docs/hardening/` |
+
+## 3. What is missing before demanding apps (e.g. Claude Code) can run
+
+In dependency order (see `docs/ROADMAP.md` for the authoritative plan):
+
+1. Threads, scheduler, ring-3 user mode, syscalls, ELF loader (Stage 3).
+2. Capabilities + IPC, driver isolation / service model (Stage 4) — the microkernel part.
+3. Block layer, VFS, a real filesystem, persistent storage (Stage 5).
+4. A libc/POSIX layer (or a native runtime) plus a toolchain, so existing runtimes (Node/Bun/Rust binaries) can be ported (Stage 7).
+5. A **socket API for userland**, TLS root store, system clock/RTC and time zones, entropy source for userland (`getrandom`), `/dev/tty`-style terminal, pipes, process spawning, signals.
+6. Graphics/compositor and fonts for a GUI terminal (Stage 6); Wi-Fi (Stage 8).
+
+## 4. Conventions that are enforced (CI + review)
+
+- **Licence header:** every source file starts with `// SPDX-License-Identifier: Apache-2.0` (`#` for scripts).
+- **`unsafe`:** only in `kernel/` (and `xtask` never). Every `unsafe` block carries a `// SAFETY:` comment.
+  Library crates (`ksparse`, `ksbt`, `ksnet`) are `#![forbid(unsafe_code)]`, `no_std`, pure and host-testable.
+- **Untrusted input** (ACPI, PCI, USB descriptors, HID, Bluetooth, network frames, device-written rings) is
+  parsed only by bounded code in the library crates, with host tests **and** a libFuzzer target in `fuzz/`.
+  Never trust fields in memory shared with a device (copy link/length fields into driver-private state).
+- **Logging:** `kprintln!` (serial + `klog` ring, viewable on screen with the `L` key). Hardware bring-up code
+  logs generously, with a short subsystem prefix (`usb:`, `bt:`, `net:` …).
+- **Hardware-agnostic logic goes into a library crate; only MMIO/DMA/PCI glue stays in `kernel/`.**
+  Drivers are written against traits (`ksnet::Nic`, `ksnet::dma::DmaMem`, `ksbt::Transport`) so they can be
+  simulated on the host.
+- **Tests:** `cargo test --workspace --exclude kernel` (host), `cargo xtask test` (QEMU + OVMF end-to-end,
+  `KS_TEST=<substring>` selects tests), `cd fuzz && cargo +nightly fuzz run <parsers|bluetooth|network>`.
+  A new driver is not done without a QEMU-observable test or an explicit "hardware-unverified" note in
+  `docs/hardware-testing.md`.
+- **Quality gates:** `cargo fmt --all --check`, `cargo clippy --workspace -- -D warnings`, `cargo deny check`
+  (licences: MIT, Apache-2.0, BSD-3-Clause, 0BSD only), `cargo xtask structure --check`.
+- **Decisions** go into an ADR (`docs/adr/template.md`); never silently contradict one — supersede it.
+- **Releases:** `cargo xtask release` regenerates `KS_OS-vX.Y.Z/` (image, README, SHA256SUMS, licences). Tags are the owner's.
+
+## 5. Commands
+
+```bash
+cargo xtask build                 # kernel ELF
+cargo xtask image                 # bootable GPT/ESP disk image
+cargo xtask run                   # boot in QEMU (needs OVMF); QEMU_EXTRA="..." for more flags
+cargo xtask test                  # full end-to-end suite (KS_TEST=net for a subset)
+cargo xtask release               # rebuild the release folder
+cargo xtask structure [--check]   # regenerate / verify this file
+cargo test --workspace --exclude kernel
+```
+
+Kernel command line (Limine `limine.conf`, set by xtask): `selftest=<name>` runs a self-test instead of the
+UI; `apic=x2` enables x2APIC; `nettest.port=N nettest.dns=NAME` parameterise the `net` self-test.
+
+## 6. How to add a driver (recipe)
+
+1. Put register/descriptor/state-machine logic in a library crate with a host test against a simulated device.
+2. Add the kernel glue under `kernel/src/<subsystem>/`: PCI match (`pci::devices()`), `pci::map_bar`,
+   `dma::Dma`, and call `<subsystem>::init(&boot)` from `kernel/src/main.rs` after `usb::init`.
+3. Poll it from `ui.rs`'s idle loop (`<subsystem>::service()`); expose status through a `take_status()` line.
+4. Add a `selftest=<name>` case in `kernel/src/selftest.rs` and an end-to-end test in `xtask/src/tests.rs`.
+5. Write/extend an ADR; update `docs/ROADMAP.md`, `CHANGELOG.md` and re-run `cargo xtask structure`.
+
+## 7. Crates *(generated)*
+
+{{CRATES}}
+
+## 8. Repository tree *(generated)*
+
+Each entry shows the first documentation line of the file.
+
+```text
+{{TREE}}
+```
+
+## 9. Architecture decision records *(generated)*
+
+{{ADRS}}

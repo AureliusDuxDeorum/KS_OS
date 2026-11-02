@@ -24,6 +24,7 @@ mod limine;
 mod notices;
 mod qemu;
 mod release;
+mod structure;
 mod tests;
 
 use std::path::{Path, PathBuf};
@@ -126,6 +127,7 @@ fn main() -> ExitCode {
         "build" => build_kernel(&ctx),
         "image" => build_image(&ctx).map(|_| ()),
         "release" => release::run(&ctx),
+        "structure" => structure::run(&ctx, args.iter().any(|a| a == "--check")),
         "image-cmdline" => build_kernel(&ctx).and_then(|()| {
             write_image(&ctx, &args[1], &ctx.target_dir().join("ks_os-cmdline.img"))
         }),
