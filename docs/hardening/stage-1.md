@@ -132,3 +132,11 @@ Scan found 18 items: 9 fixed (S-01…S-09 incl. the High-severity Bluetooth auto
 reasons, 5 open for Gate G2/G3. **Gate G2 blockers that remain:** S-12 (unencrypted bonds), S-14 (no IOMMU),
 S-15 (unauthenticated boot chain). See the ADR for the full table.
 
+## 13. Addendum (2026-11-02, Phase D — KASLR, closes R4 / ADR-0030 S-16 in part)
+- The kernel is now a position-independent executable; Limine slides it by a random 2 MiB-aligned offset each boot
+  (`kaslr: yes`). QEMU test `kaslr` boots three times and requires differing bases; the full suite is unchanged.
+- Kernel addresses appear in the log only in fatal-fault reports (needed for diagnosis; the log is local-only).
+- **Stack canaries remain unavailable**: they need `-Z stack-protector` (nightly), the project is pinned to stable
+  (ADR-0007). Compensating controls: guard pages on every kernel stack, `forbid(unsafe)` libraries,
+  `overflow-checks`, W^X, SMEP/SMAP/UMIP. Revisit when `-C stack-protector` stabilises.
+

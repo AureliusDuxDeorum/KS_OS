@@ -13,7 +13,7 @@ const FIRST_LBA: u64 = 2048;
 /// Renders `limine.conf`; `cmdline` is passed to the kernel (empty for production images).
 fn limine_conf(cmdline: &str, modules: &[Blob]) -> String {
     let mut conf = String::from(
-        "timeout: 0\neditor_enabled: no\nserial: yes\n\n/KS_OS\n    protocol: limine\n    path: boot():/boot/kernel\n",
+        "timeout: 0\neditor_enabled: no\nserial: yes\n\n/KS_OS\n    protocol: limine\n    kaslr: yes\n    path: boot():/boot/kernel\n",
     );
     for m in modules {
         conf.push_str(&format!("    module_path: boot():/boot/fw/{}\n", m.name));

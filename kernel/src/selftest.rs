@@ -68,6 +68,17 @@ pub fn run(name: &str, boot: &BootInfo) {
             crate::time::sleep_ms(20);
         }
         "rng" => test_rng(),
+        "kaslr" => {
+            let base = crate::limine::EXECUTABLE_ADDRESS
+                .response()
+                .map_or(0, |r| r.virtual_base);
+            check(
+                base >= 0xffff_ffff_8000_0000,
+                "the kernel runs in the higher half",
+            );
+            kprintln!("selftest: kaslr base {base:#x}");
+            kprintln!("selftest: kaslr ok");
+        }
         "cpu-protections" => {
             let want = arch::supported_protections();
             let have = arch::read_cr4() & (arch::CR4_SMEP | arch::CR4_SMAP | arch::CR4_UMIP);

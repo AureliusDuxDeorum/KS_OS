@@ -649,6 +649,30 @@ fn test_cpu_protections(ctx: &Ctx, _image: &Path) -> Result<()> {
     Ok(())
 }
 
+fn test_kaslr(ctx: &Ctx, _image: &Path) -> Result<()> {
+    let base = |tag: &str| -> Result<String> {
+        let log = selftest_log_with(ctx, "kaslr", "selftest: kaslr ok", &["-cpu", "max"])
+            .map_err(|e| format!("{tag}: {e}"))?;
+        log.lines()
+            .find_map(|l| l.strip_prefix("selftest: kaslr base "))
+            .map(str::to_owned)
+            .ok_or_else(|| format!("{tag}: no base in log").into())
+    };
+    let bases = [base("boot 1")?, base("boot 2")?, base("boot 3")?];
+    let distinct = bases
+        .iter()
+        .collect::<std::collections::BTreeSet<_>>()
+        .len();
+    if distinct < 2 {
+        return Err(format!("kernel base never changed across boots: {bases:?}").into());
+    }
+    println!(
+        "ok   KASLR: the kernel base differs between boots ({} distinct of 3)",
+        distinct
+    );
+    Ok(())
+}
+
 fn test_net_virtio(ctx: &Ctx, _image: &Path) -> Result<()> {
     let log = net_test(ctx, "virtio-net-pci,disable-legacy=on", "virtio-net")?;
     expect_all(
@@ -690,7 +714,7 @@ fn test_net_igb(ctx: &Ctx, _image: &Path) -> Result<()> {
 pub fn run_all(ctx: &Ctx, image: &Path) -> Result<()> {
     let mut failed = 0;
     type TestFn = fn(&Ctx, &Path) -> Result<()>;
-    let tests: [(&str, TestFn); 26] = [
+    let tests: [(&str, TestFn); 27] = [
         ("ksparse", test_ksparse_host),
         ("boot", test_boot_banner),
         ("poweroff-key", test_power_off_key),
@@ -713,6 +737,7 @@ pub fn run_all(ctx: &Ctx, image: &Path) -> Result<()> {
         ("x2apic", test_x2apic),
         ("nmi-real", test_nmi_real),
         ("cpu-protections", test_cpu_protections),
+        ("kaslr", test_kaslr),
         ("net-virtio", test_net_virtio),
         ("net-igb", test_net_igb),
         ("memory", test_memory_selftests),

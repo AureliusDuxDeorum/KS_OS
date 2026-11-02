@@ -3,7 +3,8 @@ xtask = "run --quiet --package xtask --"
 
 [target.x86_64-unknown-none]
 rustflags = [
-  "-C", "relocation-model=static",
-  "-C", "link-arg=-no-pie",
+  "-C", "relocation-model=pic",
+  "-C", "link-arg=-pie",
+  "-C", "link-arg=-znotext",
   "-C", "target-feature=+crt-static",
 ]

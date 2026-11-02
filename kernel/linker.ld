@@ -8,6 +8,7 @@ PHDRS
     text   PT_LOAD FLAGS(5);   /* R-X */
     rodata PT_LOAD FLAGS(4);   /* R-- */
     data   PT_LOAD FLAGS(6);   /* RW- */
+    dynamic PT_DYNAMIC;        /* required by Limine for a relocatable (KASLR) kernel */
 }
 
 SECTIONS
@@ -26,6 +27,12 @@ SECTIONS
     .rodata : {
         *(.rodata .rodata.*)
     } :rodata
+    /* Dynamic-linking tables: Limine applies the R_X86_64_RELATIVE entries when it slides the kernel. */
+    .dynsym : { *(.dynsym) } :rodata
+    .dynstr : { *(.dynstr) } :rodata
+    .hash : { *(.hash) } :rodata
+    .gnu.hash : { *(.gnu.hash) } :rodata
+    .rela.dyn : { *(.rela.dyn) *(.rela.*) } :rodata
     . = ALIGN(4096);
     __rodata_end = .;
 
@@ -39,9 +46,11 @@ SECTIONS
         KEEP(*(.limine_requests_end))
     } :data
 
+    .dynamic : { *(.dynamic) } :data :dynamic
+
     .got : {
         *(.got .got.*)
-    }
+    } :data
 
     .bss : {
         *(.bss .bss.*)
