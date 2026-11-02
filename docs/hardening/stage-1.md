@@ -127,3 +127,8 @@ then change **Status** to CLOSED and update `docs/ROADMAP.md`.
   ICMP echo and has no firewall; receive is polled (no interrupts); IPv4 only; DNS has no DNSSEC/DoT;
   weak TCP seed fallback if no hardware RNG (logged); I225-V specifics are unverified on hardware.
 
+## 12. Addendum (2026-11-02, security review 1 — ADR-0030)
+Scan found 18 items: 9 fixed (S-01…S-09 incl. the High-severity Bluetooth auto-pairing), 4 accepted with
+reasons, 5 open for Gate G2/G3. **Gate G2 blockers that remain:** S-12 (unencrypted bonds), S-14 (no IOMMU),
+S-15 (unauthenticated boot chain). See the ADR for the full table.
+

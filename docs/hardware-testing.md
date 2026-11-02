@@ -3,7 +3,7 @@
 How to test KS_OS on the owner's machine and what to send back. Nothing here needs a serial port.
 
 ## 1. Get the image (no build tools needed)
-The ready-made boot image lives in the repository's top-level folder **`KS_OS-v0.2.0/`**, with its
+The ready-made boot image lives in the repository's top-level folder **`KS_OS-v0.2.1/`**, with its
 own `README.txt`. Add the Bluetooth firmware (copied from your Linux install; it is not redistributed)
 with the helper script in the same folder:
 
@@ -12,14 +12,14 @@ mkdir -p ~/ksfw
 cp /lib/firmware/mediatek/BT_RAM_CODE_MT7961_1_2_hdr.bin.zst  ~/ksfw/
 cp /lib/firmware/mediatek/BT_RAM_CODE_MT7961_1a_2_hdr.bin.zst ~/ksfw/
 sudo apt install mtools zstd            # once
-cd KS_OS-v0.2.0
-./add-bluetooth-firmware.sh KS_OS-v0.2.0.img ~/ksfw
+cd KS_OS-v0.2.1
+./add-bluetooth-firmware.sh KS_OS-v0.2.1.img ~/ksfw
 ```
 
 Then write the image to a USB stick (**this erases the stick**; check the device with `lsblk`):
 
 ```bash
-sudo dd if=KS_OS-v0.2.0.img of=/dev/sdX bs=4M conv=fsync status=progress
+sudo dd if=KS_OS-v0.2.1.img of=/dev/sdX bs=4M conv=fsync status=progress
 ```
 
 Boot it from the firmware boot menu. Secure Boot must be off (the image is not signed).
@@ -34,6 +34,10 @@ Boot it from the firmware boot menu. Secure Boot must be off (the image is not s
   It refreshes every second and returns to the buttons as soon as any input device works.
 
 ## 3. Pairing
+Since 0.2.1 the machine only pairs *new* devices during a pairing window. With no other keyboard or mouse
+connected (your situation) it opens by itself for 120 s after boot; if you miss it, press **B** on any
+working input device (or reboot). Already-paired devices reconnect on their own at any time.
+
 Put a device into pairing mode while the machine is scanning (scans repeat every ~30 s):
 - **Logitech MX Master 3S:** press and hold an Easy-Switch button until its LED blinks quickly.
   Use a slot that is *not* currently paired to your Linux machine.

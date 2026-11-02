@@ -6,7 +6,7 @@
 > `cargo xtask structure`; CI fails if this file is stale (`cargo xtask structure --check`).
 > Hand-written text lives in `xtask/structure/STRUCTURE.md.in` — edit that, not this file.
 
-- **Version:** `0.2.0` (`X.Y.Z`: X = finished (0/1), Y = version, Z = bug patch — `docs/VERSIONING.md`)
+- **Version:** `0.2.1` (`X.Y.Z`: X = finished (0/1), Y = version, Z = bug patch — `docs/VERSIONING.md`)
 - **Repository:** `AureliusDuxDeorum/KS_OS` · **Licence:** Apache-2.0 (the KS name and logos are not licensed, `TRADEMARKS.md`)
 - **Owner:** Nils Seidenberg · **Process:** Stages → Phases → Steps, a hardening gate between stages, every
   decision recorded as an ADR in `docs/adr/` · Conventional Commits, one logical change per commit.
@@ -35,7 +35,7 @@ Everything runs in ring 0 in one address space, driven by a single boot CPU and 
 | Interrupts | Own GDT/TSS/IDT, IST stacks for #DF/NMI/#MC, guard-paged stacks; xAPIC (x2APIC opt-in `apic=x2`, untested), IOAPIC via MADT, MSI/MSI-X, 1 kHz tick, TSC calibrated from the ACPI PM timer |
 | Concurrency | No threads or scheduler. `sync::IrqMutex` (spin + IRQ disable) protects state shared with interrupt handlers. Drivers are **polled from the UI idle loop** (`ui.rs`) |
 | Firmware services | UEFI runtime services relocated with `SetVirtualAddressMap` (Memory Attributes Table W^X policy); ACPI S5 power-off; reboot-to-firmware-setup via `OsIndications` |
-| Input | PS/2 (interrupt-driven), USB HID via xHCI (hubs, full report-descriptor parser), Bluetooth LE HID-over-GATT; all feed `input::Event` queue |
+| Input | PS/2 (interrupt-driven), USB HID via xHCI (hubs, full report-descriptor parser), Bluetooth LE HID-over-GATT (new devices only pair inside a pairing window: auto for 120 s if no other input exists, else key `B`); all feed `input::Event` queue |
 | Network | Intel igc (I225/I226) + igb (QEMU), virtio-net; smoltcp stack: DHCPv4, DNS (A), ICMP echo, TCP client/listen; IPv4 only; **no UDP/TCP socket API for applications yet** (kernel-internal `net::with`) |
 | Bluetooth | USB controllers; MediaTek MT7921 bring-up (experimental), HCI/L2CAP/ATT/GATT/SMP (LE Secure Connections only)/HOGP; Classic BR/EDR **not** implemented; bonds in UEFI NV variable `KSOS-BT-BONDS` (unencrypted — known gap) |
 | Graphics | UEFI GOP linear framebuffer only (`fb.rs`), 8x8 bitmap font, monochrome placeholder UI. No GPU driver, no compositor |
@@ -73,6 +73,8 @@ In dependency order (see `docs/ROADMAP.md` for the authoritative plan):
   `docs/hardware-testing.md`.
 - **Quality gates:** `cargo fmt --all --check`, `cargo clippy --workspace -- -D warnings`, `cargo deny check`
   (licences: MIT, Apache-2.0, BSD-3-Clause, 0BSD only), `cargo xtask structure --check`.
+- **Security reviews** run at every stage gate (scan → record in an ADR → fix); the latest is `docs/adr/0030-security-review-1.md` and its open items (IOMMU, unencrypted bonds, unauthenticated boot chain) block Gate G2.
+  The release profile has `overflow-checks = true`; the kernel `deny`s `undocumented_unsafe_blocks`.
 - **Decisions** go into an ADR (`docs/adr/template.md`); never silently contradict one — supersede it.
 - **Releases:** `cargo xtask release` regenerates `KS_OS-vX.Y.Z/` (image, README, SHA256SUMS, licences). Tags are the owner's.
 
@@ -129,6 +131,7 @@ KS_OS/
 ├── Cargo.toml — Workspace manifest: members and the single release version
 ├── KS_OS-v0.1.0/ — release: boot image, SHA256SUMS, licences (7 files)
 ├── KS_OS-v0.2.0/ — release: boot image, SHA256SUMS, licences (7 files)
+├── KS_OS-v0.2.1/ — release: boot image, SHA256SUMS, licences (7 files)
 ├── LICENSE — Apache License 2.0
 ├── NOTICE — Copyright and third-party notice
 ├── README.md — KS_OS
@@ -151,12 +154,14 @@ KS_OS/
 │   │   │   ├── l2cap.rs — L2CAP basic frames over LE ACL links: reassembly, fragmentation and LE signalling
 │   │   │   ├── lib.rs — Bluetooth host stack
 │   │   │   ├── mtk.rs — MediaTek Bluetooth controller support: patch-file parsing and the WMT vendor protocol codec
+│   │   │   ├── policy.rs — Connection and pairing policy: who the host may talk to, in which order, and how often
 │   │   │   └── smp.rs — Security Manager Protocol (Core Spec Vol 3, Part H): LE Secure Connections pairing as the initiator
 │   │   └── tests/
 │   │       ├── common/
 │   │       │   └── mod.rs — A simulated Bluetooth LE controller and HID keyboard peripheral, used to test the whole host stack
 │   │       ├── crypto_vectors.rs — Cryptographic functions against the Bluetooth Core Specification sample data (Vol 3, Part H, Appendix D) and…
 │   │       ├── hw_codecs.rs — USB packet framing and the (hardware-unverified) MediaTek codec, against synthetic data
+│   │       ├── policy.rs — Pairing/connection policy: strangers only inside the pairing window, bonded first, bounded attempts, cooldown
 │   │       └── stack.rs — End-to-end tests of the Bluetooth host stack against the simulated controller and keyboard
 │   ├── ksnet/
 │   │   ├── Cargo.toml — KS_OS networking: NIC abstraction, igc/virtio descriptor logic and the smoltcp-based IP stack (DHCP, DNS,…
@@ -224,6 +229,7 @@ KS_OS/
 │   │   ├── 0027-licensing.md — ADR-0027: Licensing — Apache-2.0
 │   │   ├── 0028-networking-stack.md — ADR-0028: Networking: smoltcp stack, igc/igb and virtio-net drivers
 │   │   ├── 0029-structure-document-for-agents.md — ADR-0029: STRUCTURE.md — a generated platform reference for coding agents
+│   │   ├── 0030-security-review-1.md — ADR-0030: Security review 1 — scan results and dispositions
 │   │   ├── README.md — Architecture Decision Records
 │   │   └── template.md — ADR-NNNN: Title
 │   ├── hardening/
@@ -340,3 +346,4 @@ KS_OS/
 - [`0027-licensing.md`](docs/adr/0027-licensing.md) — ADR-0027: Licensing — Apache-2.0
 - [`0028-networking-stack.md`](docs/adr/0028-networking-stack.md) — ADR-0028: Networking: smoltcp stack, igc/igb and virtio-net drivers
 - [`0029-structure-document-for-agents.md`](docs/adr/0029-structure-document-for-agents.md) — ADR-0029: STRUCTURE.md — a generated platform reference for coding agents
+- [`0030-security-review-1.md`](docs/adr/0030-security-review-1.md) — ADR-0030: Security review 1 — scan results and dispositions

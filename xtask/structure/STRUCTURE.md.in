@@ -35,7 +35,7 @@ Everything runs in ring 0 in one address space, driven by a single boot CPU and 
 | Interrupts | Own GDT/TSS/IDT, IST stacks for #DF/NMI/#MC, guard-paged stacks; xAPIC (x2APIC opt-in `apic=x2`, untested), IOAPIC via MADT, MSI/MSI-X, 1 kHz tick, TSC calibrated from the ACPI PM timer |
 | Concurrency | No threads or scheduler. `sync::IrqMutex` (spin + IRQ disable) protects state shared with interrupt handlers. Drivers are **polled from the UI idle loop** (`ui.rs`) |
 | Firmware services | UEFI runtime services relocated with `SetVirtualAddressMap` (Memory Attributes Table W^X policy); ACPI S5 power-off; reboot-to-firmware-setup via `OsIndications` |
-| Input | PS/2 (interrupt-driven), USB HID via xHCI (hubs, full report-descriptor parser), Bluetooth LE HID-over-GATT; all feed `input::Event` queue |
+| Input | PS/2 (interrupt-driven), USB HID via xHCI (hubs, full report-descriptor parser), Bluetooth LE HID-over-GATT (new devices only pair inside a pairing window: auto for 120 s if no other input exists, else key `B`); all feed `input::Event` queue |
 | Network | Intel igc (I225/I226) + igb (QEMU), virtio-net; smoltcp stack: DHCPv4, DNS (A), ICMP echo, TCP client/listen; IPv4 only; **no UDP/TCP socket API for applications yet** (kernel-internal `net::with`) |
 | Bluetooth | USB controllers; MediaTek MT7921 bring-up (experimental), HCI/L2CAP/ATT/GATT/SMP (LE Secure Connections only)/HOGP; Classic BR/EDR **not** implemented; bonds in UEFI NV variable `KSOS-BT-BONDS` (unencrypted — known gap) |
 | Graphics | UEFI GOP linear framebuffer only (`fb.rs`), 8x8 bitmap font, monochrome placeholder UI. No GPU driver, no compositor |
@@ -73,6 +73,8 @@ In dependency order (see `docs/ROADMAP.md` for the authoritative plan):
   `docs/hardware-testing.md`.
 - **Quality gates:** `cargo fmt --all --check`, `cargo clippy --workspace -- -D warnings`, `cargo deny check`
   (licences: MIT, Apache-2.0, BSD-3-Clause, 0BSD only), `cargo xtask structure --check`.
+- **Security reviews** run at every stage gate (scan → record in an ADR → fix); the latest is `docs/adr/0030-security-review-1.md` and its open items (IOMMU, unencrypted bonds, unauthenticated boot chain) block Gate G2.
+  The release profile has `overflow-checks = true`; the kernel `deny`s `undocumented_unsafe_blocks`.
 - **Decisions** go into an ADR (`docs/adr/template.md`); never silently contradict one — supersede it.
 - **Releases:** `cargo xtask release` regenerates `KS_OS-vX.Y.Z/` (image, README, SHA256SUMS, licences). Tags are the owner's.
 

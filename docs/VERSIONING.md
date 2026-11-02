@@ -12,7 +12,7 @@ Examples: `0.1.0` first release · `0.1.1` bug fixes to it · `0.2.0` next featu
 
 ## Where the number lives
 One place: `version` under `[workspace.package]` in the root `Cargo.toml`. Every crate inherits it, the
-kernel prints it at boot (`KS_OS 0.2.0 booting`, and on screen), and `cargo xtask release` names the
+kernel prints it at boot (`KS_OS 0.2.1 booting`, and on screen), and `cargo xtask release` names the
 release folder and image from it. Change it there and nowhere else.
 
 ## Making a release

@@ -3,6 +3,18 @@
 Versions follow `X.Y.Z` as defined in [docs/VERSIONING.md](docs/VERSIONING.md): `X` = finished (0 = not),
 `Y` = version, `Z` = bug patch.
 
+## 0.2.1 — security review 1 (not finished)
+
+Boot image: [`KS_OS-v0.2.1/`](KS_OS-v0.2.1/). Details: [ADR-0030](docs/adr/0030-security-review-1.md).
+
+- **Bluetooth pairing is no longer open to anyone in range.** New devices pair only inside a pairing window:
+  automatically for 120 s when the machine has no other keyboard/mouse (so a Bluetooth-only setup still
+  works), otherwise after pressing **B**. Bonded devices reconnect as before. At most 3 attempts per round,
+  60 s cooldown after a failure.
+- CPU protections SMEP/SMAP/UMIP/WP enabled; integer overflow now stops the kernel instead of wrapping
+  silently; hostile PCI/virtio capability values are rejected instead of panicking; the pairing passkey is
+  no longer written to the log; Limine editor disabled; CI actions pinned to commit hashes.
+
 ## 0.2.0 — wired networking (not finished)
 
 Boot image: [`KS_OS-v0.2.0/`](KS_OS-v0.2.0/).
