@@ -15,7 +15,7 @@ place to find them, and a version scheme with a fixed meaning.
 - **One source of truth:** `[workspace.package] version` in the root `Cargo.toml`; the kernel, the
   boot screen, the release folder name and the tests all read it.
 - **`cargo xtask release`** produces `KS_OS-vX.Y.Z/` at the repository root containing the boot image,
-  `README.txt` (plain text, how to write and boot it), `SHA256SUMS`, `LICENSES.txt` and
+  `README.txt` (plain text, how to write and boot it), `SHA256SUMS`, `LICENSE`, `NOTICE`, `THIRD-PARTY-LICENSES.txt` and
   `add-bluetooth-firmware.sh`. The release image is always an optimised build with **no firmware and no
   kernel command line**; firmware cannot be redistributed, so the script adds it on the user's machine
   (verified by booting the modified image and observing the module in the kernel).
@@ -24,5 +24,5 @@ place to find them, and a version scheme with a fixed meaning.
 - The boot partition is 32 MiB: ample for the kernel plus firmware blobs.
 
 ## Consequences
-Licensing of KS_OS itself remains an open owner decision (ADR-0022); `LICENSES.txt` covers only
-third-party components until then. Tags (`vX.Y.Z`) are created by the owner when a release is accepted.
+Licensing of KS_OS itself was decided in ADR-0027 (Apache-2.0); `THIRD-PARTY-LICENSES.txt` covers the
+third-party components. Tags (`vX.Y.Z`) are created by the owner when a release is accepted.

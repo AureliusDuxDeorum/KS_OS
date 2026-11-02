@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! End-to-end tests: boot the real image in QEMU/OVMF and drive it.
 
 use crate::qemu::{self, Session};

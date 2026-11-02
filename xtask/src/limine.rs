@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! Fetches the pinned, checksum-verified Limine UEFI bootloader.
 //!
 //! Supply-chain note: we pin an exact upstream commit of the signed-off

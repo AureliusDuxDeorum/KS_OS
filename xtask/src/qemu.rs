@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! QEMU launch helpers.
 
 use crate::{Ctx, Result};

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! Disk image construction: a FAT ESP wrapped in a GPT, built byte-for-byte reproducibly.
 
 use crate::firmware::Blob;

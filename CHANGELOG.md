@@ -16,6 +16,9 @@ Boot image: [`KS_OS-v0.1.0/`](KS_OS-v0.1.0/).
 - Bluetooth LE host stack (pairing with LE Secure Connections, HID-over-GATT, bond storage) —
   verified against simulated devices and the Bluetooth specification test vectors.
 
+**Licensing:** Apache-2.0 (ADR-0027); the release folder ships `LICENSE`, `NOTICE` and a generated
+`THIRD-PARTY-LICENSES.txt`.
+
 **Not verified on real hardware yet:** USB on real controllers, the MediaTek Bluetooth bring-up and
 real Bluetooth peripherals. See [docs/hardware-testing.md](docs/hardware-testing.md).
 

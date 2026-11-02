@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! Build, image, run and test automation for KS_OS (`cargo xtask <command>`).
 //!
 //! Commands:
@@ -20,6 +21,7 @@
 mod disk;
 mod firmware;
 mod limine;
+mod notices;
 mod qemu;
 mod release;
 mod tests;

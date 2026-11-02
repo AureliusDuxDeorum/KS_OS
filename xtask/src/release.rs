@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! `cargo xtask release`: assembles a clearly named, self-contained release folder at the
 //! repository root (`KS_OS-vX.Y.Z/`) with the boot image, checksums and instructions.
 //!
@@ -45,24 +46,23 @@ pub fn run(ctx: &Ctx) -> Result<()> {
             std::fs::Permissions::from_mode(0o755),
         )?;
     }
-    let limine_license = std::fs::read_to_string(ctx.target_dir().join("limine").join("LICENSE"))
-        .unwrap_or_default();
+    // Licence texts travel with every binary release: ours, the notice, and every third-party component.
+    std::fs::copy(ctx.root.join("LICENSE"), dir.join("LICENSE"))?;
+    std::fs::copy(ctx.root.join("NOTICE"), dir.join("NOTICE"))?;
     std::fs::write(
-        dir.join("LICENSES.txt"),
-        format!(
-            "Third-party components inside {img_name}\n=======================================\n\n\
-             Limine bootloader (BOOTX64.EFI), https://github.com/limine-bootloader/limine\n\
-             Pinned commit and checksum: see xtask/src/limine.rs\n\n{limine_license}\n\n\
-             The KS_OS kernel itself uses Rust crates under MIT or Apache-2.0 licences (see Cargo.lock).\n"
-        ),
+        dir.join("THIRD-PARTY-LICENSES.txt"),
+        crate::notices::generate(&clean)?,
     )?;
+    let _ = std::fs::remove_file(dir.join("LICENSES.txt")); // superseded by the files above
 
     let mut sums = String::new();
     for f in [
         img_name.as_str(),
         "add-bluetooth-firmware.sh",
         "README.txt",
-        "LICENSES.txt",
+        "LICENSE",
+        "NOTICE",
+        "THIRD-PARTY-LICENSES.txt",
     ] {
         let _ = writeln!(
             sums,

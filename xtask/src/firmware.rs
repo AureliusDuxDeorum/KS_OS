@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! Firmware blobs (Bluetooth patch files and the like) supplied by the user at image-build time.
 //!
 //! They are never committed. `--firmware-dir <dir>` (or `KS_FIRMWARE_DIR`) is scanned (up to

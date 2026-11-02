@@ -19,6 +19,6 @@ release folder and image from it. Change it there and nowhere else.
 1. Bump the version in the root `Cargo.toml` and add an entry to `CHANGELOG.md`.
 2. `cargo xtask test` must pass.
 3. `cargo xtask release` creates `KS_OS-vX.Y.Z/` at the repository root: the boot image,
-   `README.txt`, `SHA256SUMS`, `LICENSES.txt` and the Bluetooth-firmware helper. Commit that folder.
+   `README.txt`, `SHA256SUMS`, `LICENSE`, `NOTICE`, `THIRD-PARTY-LICENSES.txt` and the Bluetooth-firmware helper. Commit that folder.
    Release images never contain firmware blobs.
 4. Older release folders stay in the repository so earlier versions remain downloadable.
