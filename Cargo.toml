@@ -4,7 +4,7 @@ members = ["kernel", "xtask", "crates/ksparse", "crates/ksbt", "crates/ksnet"]
 
 [workspace.package]
 # The single source of truth for the release version (X.Y.Z, see docs/VERSIONING.md).
-version = "0.2.1"
+version = "0.3.0"
 edition = "2021"
 license = "Apache-2.0"
 publish = false

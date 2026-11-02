@@ -6,7 +6,7 @@
 > `cargo xtask structure`; CI fails if this file is stale (`cargo xtask structure --check`).
 > Hand-written text lives in `xtask/structure/STRUCTURE.md.in` — edit that, not this file.
 
-- **Version:** `0.2.1` (`X.Y.Z`: X = finished (0/1), Y = version, Z = bug patch — `docs/VERSIONING.md`)
+- **Version:** `0.3.0` (`X.Y.Z`: X = finished (0/1), Y = version, Z = bug patch — `docs/VERSIONING.md`)
 - **Repository:** `AureliusDuxDeorum/KS_OS` · **Licence:** Apache-2.0 (the KS name and logos are not licensed, `TRADEMARKS.md`)
 - **Owner:** Nils Seidenberg · **Process:** Stages → Phases → Steps, a hardening gate between stages, every
   decision recorded as an ADR in `docs/adr/` · Conventional Commits, one logical change per commit.
@@ -132,6 +132,7 @@ KS_OS/
 ├── KS_OS-v0.1.0/ — release: boot image, SHA256SUMS, licences (7 files)
 ├── KS_OS-v0.2.0/ — release: boot image, SHA256SUMS, licences (7 files)
 ├── KS_OS-v0.2.1/ — release: boot image, SHA256SUMS, licences (7 files)
+├── KS_OS-v0.3.0/ — release: boot image, SHA256SUMS, licences (7 files)
 ├── LICENSE — Apache License 2.0
 ├── NOTICE — Copyright and third-party notice
 ├── README.md — KS_OS

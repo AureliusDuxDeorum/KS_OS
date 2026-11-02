@@ -3,6 +3,14 @@
 Versions follow `X.Y.Z` as defined in [docs/VERSIONING.md](docs/VERSIONING.md): `X` = finished (0 = not),
 `Y` = version, `Z` = bug patch.
 
+## 0.3.0 — robust parsers, strict keyboard pairing (not finished)
+
+Boot image: [`KS_OS-v0.3.0/`](KS_OS-v0.3.0/). Security work: [ADR-0030](docs/adr/0030-security-review-1.md) follow-ups.
+
+- The parsing crates (`ksparse`, `ksbt`, `ksnet`) can no longer panic on malformed input: indexing, unchecked
+  arithmetic, `unwrap`/`expect` are compile errors there (S-10, S-11).
+- **Keyboards must pair with a passkey**; Just Works is refused unless you press **J** for the current pairing window (S-13).
+
 ## 0.2.1 — security review 1 (not finished)
 
 Boot image: [`KS_OS-v0.2.1/`](KS_OS-v0.2.1/). Details: [ADR-0030](docs/adr/0030-security-review-1.md).

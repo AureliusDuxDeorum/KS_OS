@@ -478,7 +478,7 @@ dependencies = [
 
 [[package]]
 name = "kernel"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "font8x8",
  "ksbt",
@@ -489,7 +489,7 @@ dependencies = [
 
 [[package]]
 name = "ksbt"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "aes",
  "cmac",
@@ -500,7 +500,7 @@ dependencies = [
 
 [[package]]
 name = "ksnet"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "heapless",
  "ksparse",
@@ -509,7 +509,7 @@ dependencies = [
 
 [[package]]
 name = "ksparse"
-version = "0.2.1"
+version = "0.3.0"
 
 [[package]]
 name = "libc"
@@ -919,7 +919,7 @@ dependencies = [
 
 [[package]]
 name = "xtask"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "crc32fast",
  "fatfs",
