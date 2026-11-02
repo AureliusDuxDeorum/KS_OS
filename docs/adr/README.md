@@ -33,3 +33,4 @@ Process: [ADR-0001](0001-record-architecture-decisions.md). Template: [template.
 | [0027](0027-licensing.md) | Licensing: Apache-2.0 | Accepted |
 | [0028](0028-networking-stack.md) | Networking: smoltcp stack, igc/igb and virtio-net drivers | Accepted |
 | [0029](0029-structure-document-for-agents.md) | STRUCTURE.md — a generated platform reference for coding agents | Accepted |
+| [0030](0030-security-review-1.md) | Security review 1 — scan results and dispositions | Accepted |
