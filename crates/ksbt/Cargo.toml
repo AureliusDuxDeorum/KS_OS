@@ -10,5 +10,5 @@ description = "KS_OS Bluetooth host stack: HCI, L2CAP, ATT/GATT, SMP (LE Secure 
 ksparse = { path = "../ksparse" }
 aes = { version = "0.8", default-features = false }
 cmac = { version = "0.7", default-features = false }
-p256 = { version = "0.13", default-features = false, features = ["ecdh", "arithmetic"] }
+p256 = { version = "0.14", default-features = false, features = ["ecdh", "arithmetic"] }
 zeroize = { version = "1", default-features = false }

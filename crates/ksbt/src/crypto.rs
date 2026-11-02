@@ -10,8 +10,8 @@ use aes::cipher::{BlockEncrypt, KeyInit};
 use aes::Aes128;
 use cmac::{Cmac, Mac};
 use p256::ecdh::diffie_hellman;
-use p256::elliptic_curve::sec1::{FromEncodedPoint, ToEncodedPoint};
-use p256::{EncodedPoint, PublicKey, SecretKey};
+use p256::elliptic_curve::sec1::ToSec1Point;
+use p256::{PublicKey, SecretKey};
 use zeroize::Zeroize;
 
 fn rev<const N: usize>(mut a: [u8; N]) -> [u8; N] {
@@ -142,7 +142,7 @@ impl EphemeralKey {
 
     /// Public key as little-endian `(X, Y)`.
     pub fn public(&self) -> ([u8; 32], [u8; 32]) {
-        let point = self.secret.public_key().to_encoded_point(false);
+        let point = self.secret.public_key().to_sec1_point(false);
         let (mut x, mut y) = ([0u8; 32], [0u8; 32]);
         x.copy_from_slice(point.x().expect("uncompressed point"));
         y.copy_from_slice(point.y().expect("uncompressed point"));
@@ -152,13 +152,12 @@ impl EphemeralKey {
     /// Computes the shared DH key with the peer's little-endian public key, validating that the
     /// point lies on the curve. The result is the little-endian X coordinate.
     pub fn dh(&self, peer_x: &[u8; 32], peer_y: &[u8; 32]) -> Result<[u8; 32], EcdhError> {
-        let point = EncodedPoint::from_affine_coordinates(
-            &rev(*peer_x).into(),
-            &rev(*peer_y).into(),
-            false,
-        );
-        let public = Option::<PublicKey>::from(PublicKey::from_encoded_point(&point))
-            .ok_or(EcdhError::InvalidPublicKey)?;
+        // Uncompressed SEC1 encoding (0x04 || X || Y, big-endian); decoding validates the point is on the curve.
+        let mut sec1 = [0u8; 65];
+        sec1[0] = 0x04;
+        sec1[1..33].copy_from_slice(&rev(*peer_x));
+        sec1[33..].copy_from_slice(&rev(*peer_y));
+        let public = PublicKey::from_sec1_bytes(&sec1).map_err(|_| EcdhError::InvalidPublicKey)?;
         let shared = diffie_hellman(self.secret.to_nonzero_scalar(), public.as_affine());
         let mut out = [0u8; 32];
         out.copy_from_slice(shared.raw_secret_bytes());
