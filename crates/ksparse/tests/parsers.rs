@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+//! Unit and conformance tests of the firmware/hardware parsers against hand-built tables.
 mod support;
 use ksparse::madt::{self, Polarity, Trigger};
 use ksparse::pci::{self, BarKind, Config};
