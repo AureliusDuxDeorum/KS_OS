@@ -17,3 +17,4 @@ ksparse = { path = "../crates/ksparse" }
 ksbt = { path = "../crates/ksbt" }
 ksnet = { path = "../crates/ksnet" }
 ksiommu = { path = "../crates/ksiommu" }
+kstpm = { path = "../crates/kstpm" }

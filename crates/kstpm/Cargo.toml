@@ -1,0 +1,12 @@
+[package]
+name = "kstpm"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "KS_OS TPM 2.0 client: command marshalling, sealing a secret to PCR state and unsealing it, as pure, host-testable code."
+
+[dependencies]
+ksparse = { path = "../ksparse" }
+zeroize = { version = "1", default-features = false, features = ["alloc"] }
+aes-gcm = { version = "0.10", default-features = false, features = ["aes", "alloc"] }

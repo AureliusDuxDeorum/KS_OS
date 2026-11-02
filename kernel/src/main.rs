@@ -43,6 +43,7 @@ mod stacks;
 mod strbuf;
 mod sync;
 mod time;
+mod tpm;
 mod ui;
 mod usb;
 mod vmm;
@@ -220,6 +221,9 @@ extern "C" fn kmain() -> ! {
         &boot,
         !boot.cmdline.split_whitespace().any(|t| t == "iommu=off"),
     );
+
+    // TPM 2.0 (seals the Bluetooth bond key); before Bluetooth.
+    tpm::init(&boot);
 
     // USB: xHCI controllers, hubs and HID devices.
     usb::init(&boot);

@@ -25,6 +25,7 @@ use ksbt::host::Host;
 use ksbt::policy::{Candidate, Policy};
 use ksbt::smp::{self, io, PairingConfig, PairingUi};
 use ksbt::Address;
+use kstpm::vault::Vault;
 use spin::Mutex;
 use transport::UsbTransport;
 
@@ -35,6 +36,8 @@ const RESCAN_GAP_MS: u64 = 20_000;
 pub const BOOTSTRAP_WINDOW_MS: u64 = 120_000;
 pub const USER_WINDOW_MS: u64 = 60_000;
 const BONDS_NAME: [u16; 14] = efi::utf16("KSOS-BT-BONDS");
+const BONDS_SEALED_NAME: [u16; 15] = efi::utf16("KSOS-BT-BONDS2");
+const VAULT_LABEL: &[u8] = b"KSOS-BT-BONDS2";
 
 /// Pairing with a *new* device is allowed only while this deadline (ms since boot) lies ahead.
 /// Without it, anyone in radio range could pair a fake keyboard (ADR-0030 S-01).
@@ -145,35 +148,123 @@ impl PairingUi for KernelUi {
     }
 }
 
+/// How bonds (long-term keys) are stored (ADR-0030 S-12): encrypted with a key sealed in the TPM, or, only when
+/// the owner asks for it with `bt.bonds=unencrypted` on the kernel command line, in the clear.
+static VAULT: Mutex<Option<Vault>> = Mutex::new(None);
+static PLAIN_OK: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+
+fn read_var(efi: &Efi, name: &[u16]) -> Option<Vec<u8>> {
+    let mut buf = alloc::vec![0u8; 4096];
+    let n = efi.read_variable(name, &efi::KS_VENDOR, &mut buf).ok()?;
+    buf.truncate(n);
+    Some(buf)
+}
+
 fn load_bonds(efi: Option<&Efi>) -> BondStore {
     let Some(efi) = efi else {
         return BondStore::default();
     };
-    let mut buf = alloc::vec![0u8; 2048];
-    match efi.read_variable(&BONDS_NAME, &efi::KS_VENDOR, &mut buf) {
-        Ok(n) => {
-            let store = BondStore::from_bytes(&buf[..n]);
+    // 1. The encrypted record.
+    if let Some(rec) = read_var(efi, &BONDS_SEALED_NAME) {
+        let opened = crate::tpm::with(|tpm| Vault::open(tpm, VAULT_LABEL, &rec));
+        match opened {
+            Some(Ok((vault, plain))) => {
+                let store = BondStore::from_bytes(&plain);
+                kprintln!("bt: loaded {} bond(s) (TPM-protected)", store.bonds.len());
+                *VAULT.lock() = Some(vault);
+                return store;
+            }
+            Some(Err(e)) => kprintln!(
+                "bt: the protected bond record cannot be opened ({e:?}): the platform state changed or the record was altered; pair your devices again"
+            ),
+            None => kprintln!("bt: bonds are protected by the TPM but no TPM is available; pair your devices again"),
+        }
+        return BondStore::default();
+    }
+    // 2. A plaintext record from an older version: import it, then remove it.
+    if let Some(old) = read_var(efi, &BONDS_NAME) {
+        let store = BondStore::from_bytes(&old);
+        if !store.bonds.is_empty() {
             kprintln!(
-                "bt: loaded {} bond(s) from firmware storage",
+                "bt: found {} unprotected bond(s) from an older version",
                 store.bonds.len()
             );
-            store
         }
-        Err(_) => BondStore::default(),
+        let m_efi = *efi;
+        if crate::tpm::present() {
+            if let Some(Ok(vault)) = crate::tpm::with(|tpm| Vault::create(tpm, VAULT_LABEL)) {
+                *VAULT.lock() = Some(vault);
+                if write_sealed(&m_efi, &store) {
+                    let _ = m_efi.write_variable(&BONDS_NAME, &efi::KS_VENDOR, &[]); // deletes the plaintext copy
+                    kprintln!("bt: bonds migrated to TPM-protected storage; the unprotected copy was erased");
+                }
+            }
+        } else if !PLAIN_OK.load(core::sync::atomic::Ordering::Relaxed) {
+            kprintln!("bt: no TPM: the old unprotected bonds are used for this session only");
+        }
+        return store;
+    }
+    BondStore::default()
+}
+
+fn write_sealed(efi: &Efi, store: &BondStore) -> bool {
+    let rec = {
+        let g = VAULT.lock();
+        let Some(vault) = g.as_ref() else {
+            return false;
+        };
+        crate::tpm::with(|tpm| vault.seal_record(tpm, &store.to_bytes()))
+    };
+    match rec {
+        Some(Ok(rec)) => match efi.write_variable(&BONDS_SEALED_NAME, &efi::KS_VENDOR, &rec) {
+            Ok(()) => true,
+            Err(s) => {
+                kprintln!("bt: could not store the protected bond record (EFI status {s:#x})");
+                false
+            }
+        },
+        _ => false,
     }
 }
 
 fn save_bonds(m: &Manager) {
-    if let Some(efi) = &m.efi {
-        match efi.write_variable(&BONDS_NAME, &efi::KS_VENDOR, &m.bonds.to_bytes()) {
-            Ok(()) => kprintln!("bt: bonds saved ({} entr(ies))", m.bonds.bonds.len()),
-            Err(s) => kprintln!("bt: could not save bonds (EFI status {s:#x}); you will need to pair again after a reboot"),
+    let Some(efi) = &m.efi else { return };
+    if crate::tpm::present() {
+        if VAULT.lock().is_none() {
+            // First pairing on this machine: create the TPM-sealed key now.
+            if let Some(Ok(v)) = crate::tpm::with(|tpm| Vault::create(tpm, VAULT_LABEL)) {
+                *VAULT.lock() = Some(v);
+            }
         }
+        if write_sealed(efi, &m.bonds) {
+            kprintln!(
+                "bt: bonds saved, encrypted with a TPM-sealed key ({} entr(ies))",
+                m.bonds.bonds.len()
+            );
+            return;
+        }
+        kprintln!("bt: bonds could not be saved (TPM or firmware storage error); you will need to pair again after a reboot");
+    } else if PLAIN_OK.load(core::sync::atomic::Ordering::Relaxed) {
+        match efi.write_variable(&BONDS_NAME, &efi::KS_VENDOR, &m.bonds.to_bytes()) {
+            Ok(()) => kprintln!(
+                "bt: bonds saved UNENCRYPTED as requested by bt.bonds=unencrypted ({} entr(ies))",
+                m.bonds.bonds.len()
+            ),
+            Err(s) => kprintln!("bt: could not save bonds (EFI status {s:#x})"),
+        }
+    } else {
+        kprintln!("bt: bonds are NOT saved: this machine has no usable TPM to protect them (add bt.bonds=unencrypted to the kernel command line to store them unprotected)");
     }
 }
 
 /// Brings up the first usable Bluetooth controller, if any.
 pub fn init(boot: &BootInfo, efi: Option<&Efi>) {
+    PLAIN_OK.store(
+        boot.cmdline
+            .split_whitespace()
+            .any(|t| t == "bt.bonds=unencrypted"),
+        core::sync::atomic::Ordering::Relaxed,
+    );
     let controllers = transport::controllers();
     if controllers.is_empty() {
         kprintln!("bt: no Bluetooth controller found on USB");

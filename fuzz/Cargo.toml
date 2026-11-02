@@ -12,6 +12,7 @@ libfuzzer-sys = "0.4"
 ksparse = { path = "../crates/ksparse" }
 ksbt = { path = "../crates/ksbt" }
 ksnet = { path = "../crates/ksnet" }
+kstpm = { path = "../crates/kstpm" }
 
 # Standalone workspace: fuzzing needs a nightly toolchain and must not affect the main build.
 [workspace]
@@ -33,6 +34,13 @@ bench = false
 [[bin]]
 name = "network"
 path = "fuzz_targets/network.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "tpm"
+path = "fuzz_targets/tpm.rs"
 test = false
 doc = false
 bench = false

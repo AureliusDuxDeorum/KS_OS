@@ -76,6 +76,15 @@ Plug the LAN cable in **before** powering on. Look for these `net:` lines on the
   (NIC → stack → router) is verified. `does not answer ping` means the router ignores ping (not necessarily a fault).
 If the NIC is not listed at all, send the `pci:` line containing `8086:15f3`.
 
+## 4c. TPM and DMA protection
+- `tpm: TPM 2.0 ready (CRB interface)` — your TPM was found. If you see `tpm: not usable: start method N needs ACPI
+  AML (unsupported)` or `no TPM2 ACPI table`, Bluetooth pairings will not be saved between boots (add
+  `bt.bonds=unencrypted` with `set-cmdline.sh` if you accept that), and please send the line.
+- `bt: bonds saved, encrypted with a TPM-sealed key` — pairings persist protected. First boot after updating from an
+  older version also prints `bonds migrated to TPM-protected storage`.
+- `iommu: Intel VT-d DMA remapping ENABLED ...` / `AMD-Vi ... ENABLED` — DMA protection is on. If devices stop working,
+  see the IOMMU section of README.txt (`set-cmdline.sh ... "iommu=off"`) and send the `iommu:` lines.
+
 ## 5. Safe fallbacks
 - Nothing in this image writes to disks. The only persistent write is the Bluetooth bond variable
   `KSOS-BT-BONDS` in firmware NV storage (removable with any UEFI variable editor).

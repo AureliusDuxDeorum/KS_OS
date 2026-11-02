@@ -1058,6 +1058,62 @@ fn test_cmdline_script(ctx: &Ctx, _image: &Path) -> Result<()> {
     Ok(())
 }
 
+/// Boots with a software TPM (`swtpm`) behind QEMU's CRB and TIS devices and runs the vault round trip.
+fn test_tpm(ctx: &Ctx, _image: &Path) -> Result<()> {
+    use std::process::{Command, Stdio};
+    if Command::new("swtpm").arg("--version").output().is_err() {
+        println!("skip TPM test (swtpm is not installed)");
+        return Ok(());
+    }
+    for (device, label) in [("tpm-crb", "CRB"), ("tpm-tis", "TIS")] {
+        let dir = ctx.target_dir().join(format!("swtpm-{label}"));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir)?;
+        let sock = dir.join("swtpm.sock");
+        let mut tpm = Command::new("swtpm")
+            .args(["socket", "--tpm2", "--tpmstate"])
+            .arg(format!("dir={}", dir.display()))
+            .arg("--ctrl")
+            .arg(format!("type=unixio,path={}", sock.display()))
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()?;
+        for _ in 0..100 {
+            if sock.exists() {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        let chardev = format!("socket,id=chrtpm,path={}", sock.display());
+        let dev = format!("{device},tpmdev=tpm0");
+        let r = selftest_log_with(
+            ctx,
+            "tpm",
+            "selftest: tpm ok",
+            &[
+                "-cpu",
+                "max",
+                "-chardev",
+                &chardev,
+                "-tpmdev",
+                "emulator,id=tpm0,chardev=chrtpm",
+                "-device",
+                &dev,
+            ],
+        );
+        let _ = tpm.kill();
+        let _ = tpm.wait();
+        let log = r?;
+        expect_all(
+            &log,
+            &format!("tpm/{label}"),
+            &[&format!("tpm: TPM 2.0 ready ({label} interface)")],
+        )?;
+    }
+    println!("ok   TPM 2.0 (swtpm) over the CRB and TIS interfaces: random numbers, key sealed to PCR 7, encrypted record round trip");
+    Ok(())
+}
+
 fn test_net_virtio(ctx: &Ctx, _image: &Path) -> Result<()> {
     let log = net_test(ctx, "virtio-net-pci,disable-legacy=on", "virtio-net", &[])?;
     expect_all(
@@ -1099,7 +1155,7 @@ fn test_net_igb(ctx: &Ctx, _image: &Path) -> Result<()> {
 pub fn run_all(ctx: &Ctx, image: &Path) -> Result<()> {
     let mut failed = 0;
     type TestFn = fn(&Ctx, &Path) -> Result<()>;
-    let tests: [(&str, TestFn); 33] = [
+    let tests: [(&str, TestFn); 34] = [
         ("ksparse", test_ksparse_host),
         ("boot", test_boot_banner),
         ("poweroff-key", test_power_off_key),
@@ -1124,6 +1180,7 @@ pub fn run_all(ctx: &Ctx, image: &Path) -> Result<()> {
         ("x2apic", test_x2apic),
         ("nmi-real", test_nmi_real),
         ("cpu-protections", test_cpu_protections),
+        ("tpm", test_tpm),
         ("kaslr", test_kaslr),
         ("boot-chain", test_boot_chain_integrity),
         ("secure-boot", test_secure_boot),

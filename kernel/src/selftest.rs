@@ -68,6 +68,45 @@ pub fn run(name: &str, boot: &BootInfo) {
             crate::time::sleep_ms(20);
         }
         "rng" => test_rng(),
+        "tpm" => {
+            use kstpm::vault::Vault;
+            check(crate::tpm::present(), "a TPM 2.0 was found and answers");
+            let r = crate::tpm::with(|t| t.random(32)).and_then(Result::ok);
+            check(
+                r.as_ref()
+                    .is_some_and(|v| v.len() == 32 && v.iter().any(|b| *b != 0)),
+                "the TPM returns random bytes",
+            );
+            let plain = b"selftest bond store contents".to_vec();
+            let rec = crate::tpm::with(|t| {
+                let v = Vault::create(t, b"KSOS-SELFTEST").ok()?;
+                v.seal_record(t, &plain).ok()
+            })
+            .flatten();
+            check(
+                rec.is_some(),
+                "a key was created, sealed to PCR 7, and a record encrypted with it",
+            );
+            let rec = rec.unwrap_or_default();
+            check(
+                !rec.windows(8).any(|w| w == &plain[..8]),
+                "the record does not contain the plaintext",
+            );
+            let back =
+                crate::tpm::with(|t| Vault::open(t, b"KSOS-SELFTEST", &rec).ok().map(|(_, p)| p))
+                    .flatten();
+            check(
+                back.as_deref() == Some(&plain[..]),
+                "unsealing the key and decrypting returns the original bytes",
+            );
+            let mut bad = rec.clone();
+            if let Some(b) = bad.last_mut() {
+                *b ^= 1;
+            }
+            let rejected = crate::tpm::with(|t| Vault::open(t, b"KSOS-SELFTEST", &bad).is_err());
+            check(rejected == Some(true), "a modified record is rejected");
+            kprintln!("selftest: tpm ok");
+        }
         "kaslr" => {
             let base = crate::limine::EXECUTABLE_ADDRESS
                 .response()

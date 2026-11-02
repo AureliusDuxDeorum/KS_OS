@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["kernel", "xtask", "crates/ksparse", "crates/ksbt", "crates/ksnet", "crates/ksiommu"]
+members = ["kernel", "xtask", "crates/ksparse", "crates/ksbt", "crates/ksnet", "crates/ksiommu", "crates/kstpm"]
 
 [workspace.package]
 # The single source of truth for the release version (X.Y.Z, see docs/VERSIONING.md).

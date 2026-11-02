@@ -110,6 +110,7 @@ UI; `apic=x2` enables x2APIC; `nettest.port=N nettest.dns=NAME` parameterise the
 | `ksiommu` | `crates/ksiommu/` | KS_OS IOMMU building blocks: I/O page tables, Intel VT-d root/context entries and AMD-Vi device-table entries as pure, host-testable code. |
 | `ksnet` | `crates/ksnet/` | KS_OS networking: NIC abstraction, igc/virtio descriptor logic and the smoltcp-based IP stack (DHCP, DNS, ICMP, TCP) as pure, host-testable code. |
 | `ksparse` | `crates/ksparse/` | Pure, bounds-checked parsers for firmware and hardware data (ACPI, PCI) shared by the KS_OS kernel and its host-side tests/fuzzers. |
+| `kstpm` | `crates/kstpm/` | KS_OS TPM 2.0 client: command marshalling, sealing a secret to PCR state and unsealing it, as pure, host-testable code. |
 | `ksparse-fuzz` | `fuzz/` | libFuzzer targets (nightly; standalone workspace). |
 | `kernel` | `kernel/` | The kernel binary (`no_std`, ring 0). All `unsafe` hardware glue lives here. |
 | `xtask` | `xtask/` | Host tooling: build, image, QEMU tests, release, this document (`cargo xtask …`). |
@@ -190,25 +191,34 @@ KS_OS/
 │   │       ├── filter.rs — Ingress filter rules: default-deny, stealth for closed ports, no spoofed/martian/fragmented traffic
 │   │       ├── rings.rs — igc descriptor-ring and virtqueue logic against simulated devices that behave like the hardware
 │   │       └── stack.rs — End-to-end tests of the IP stack (DHCP, ping, DNS, TCP with packet loss, link loss) against a scripted server
-│   └── ksparse/
-│       ├── Cargo.toml — Pure, bounds-checked parsers for firmware and hardware data (ACPI, PCI) shared by the KS_OS kernel and its…
+│   ├── ksparse/
+│   │   ├── Cargo.toml — Pure, bounds-checked parsers for firmware and hardware data (ACPI, PCI) shared by the KS_OS kernel and its…
+│   │   ├── src/
+│   │   │   ├── bytes.rs — Bounds-checked little-endian readers
+│   │   │   ├── efi.rs — UEFI data structures handed over by firmware: memory-map descriptors, configuration tables and the Memory…
+│   │   │   ├── harness.rs — Entry points shared by the host robustness tests and the fuzz targets
+│   │   │   ├── hid.rs — HID report-descriptor parsing and input-report interpretation (HID 1.11)
+│   │   │   ├── iommu.rs — ACPI tables that describe IOMMUs: Intel `DMAR` (VT-d) and AMD `IVRS` (AMD-Vi)
+│   │   │   ├── lib.rs — Pure, allocation-light parsers for untrusted firmware and hardware data
+│   │   │   ├── madt.rs — ACPI MADT (multiple APIC description table) parser
+│   │   │   ├── mcfg.rs — ACPI MCFG table: where PCI Express enhanced configuration (ECAM) space lives
+│   │   │   ├── pci.rs — PCI configuration-space decoding: headers, capabilities, BARs, MSI/MSI-X
+│   │   │   ├── sdt.rs — ACPI system description tables: RSDP, table headers, FADT and the `\_S5` object
+│   │   │   └── usb.rs — USB descriptors and control-request helpers
+│   │   └── tests/
+│   │       ├── iommu_tables.rs — DMAR (Intel VT-d) and IVRS (AMD-Vi) table parsing against hand-built tables
+│   │       ├── parsers.rs — Unit and conformance tests of the firmware/hardware parsers against hand-built tables
+│   │       ├── robustness.rs — Randomised and exhaustive-mutation robustness tests: no input may panic or hang
+│   │       └── support.rs — Builders for valid sample tables, shared by the integration tests
+│   └── kstpm/
+│       ├── Cargo.toml — KS_OS TPM 2.0 client: command marshalling, sealing a secret to PCR state and unsealing it, as pure,…
 │       ├── src/
-│       │   ├── bytes.rs — Bounds-checked little-endian readers
-│       │   ├── efi.rs — UEFI data structures handed over by firmware: memory-map descriptors, configuration tables and the Memory…
-│       │   ├── harness.rs — Entry points shared by the host robustness tests and the fuzz targets
-│       │   ├── hid.rs — HID report-descriptor parsing and input-report interpretation (HID 1.11)
-│       │   ├── iommu.rs — ACPI tables that describe IOMMUs: Intel `DMAR` (VT-d) and AMD `IVRS` (AMD-Vi)
-│       │   ├── lib.rs — Pure, allocation-light parsers for untrusted firmware and hardware data
-│       │   ├── madt.rs — ACPI MADT (multiple APIC description table) parser
-│       │   ├── mcfg.rs — ACPI MCFG table: where PCI Express enhanced configuration (ECAM) space lives
-│       │   ├── pci.rs — PCI configuration-space decoding: headers, capabilities, BARs, MSI/MSI-X
-│       │   ├── sdt.rs — ACPI system description tables: RSDP, table headers, FADT and the `\_S5` object
-│       │   └── usb.rs — USB descriptors and control-request helpers
+│       │   ├── harness.rs — Fuzz/robustness entry point: a TPM that answers with arbitrary bytes, and arbitrary stored records
+│       │   ├── lib.rs — A small TPM 2.0 client (TCG TPM 2.0 Library spec, part 3 commands, part 2 structures)
+│       │   ├── vault.rs — A TPM-backed vault for small records (the Bluetooth bond store)
+│       │   └── wire.rs — Big-endian TPM wire encoding helpers
 │       └── tests/
-│           ├── iommu_tables.rs — DMAR (Intel VT-d) and IVRS (AMD-Vi) table parsing against hand-built tables
-│           ├── parsers.rs — Unit and conformance tests of the firmware/hardware parsers against hand-built tables
-│           ├── robustness.rs — Randomised and exhaustive-mutation robustness tests: no input may panic or hang
-│           └── support.rs — Builders for valid sample tables, shared by the integration tests
+│           └── swtpm.rs — The TPM client against a real TPM 2.0 implementation (`swtpm`, IBM's reference software TPM)
 ├── deny.toml — cargo-deny policy (licences, advisories, sources)
 ├── docs/
 │   ├── ROADMAP.md — Roadmap
@@ -258,7 +268,8 @@ KS_OS/
 │   └── fuzz_targets/
 │       ├── bluetooth.rs
 │       ├── network.rs
-│       └── parsers.rs
+│       ├── parsers.rs
+│       └── tpm.rs
 ├── kernel/
 │   ├── Cargo.toml
 │   ├── build.rs — Passes the kernel linker script to the linker
@@ -307,6 +318,7 @@ KS_OS/
 │       ├── strbuf.rs — Fixed-capacity, allocation-free string buffer implementing `fmt::Write`
 │       ├── sync.rs — Interrupt-safe spin lock
 │       ├── time.rs — Timekeeping: calibrated TSC clock, local APIC timer tick and sleeping
+│       ├── tpm.rs — TPM 2.0 transport: the CRB (command-response buffer; Intel PTT, many fTPMs, QEMU `tpm-crb`) and the TIS/FIFO…
 │       ├── ui.rs — The Stage 1 screen: the "OS operating" banner and two buttons
 │       ├── usb/
 │       │   ├── hid.rs — USB HID class driver: keyboards and relative pointing devices feed the unified input queue
