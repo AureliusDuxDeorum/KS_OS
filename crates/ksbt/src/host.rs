@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! The Bluetooth host: drives a controller through a [`Transport`] and exposes connected peers
 //! as ATT and SMP channels.
 //!

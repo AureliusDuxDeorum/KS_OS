@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! ACPI system description tables: RSDP, table headers, FADT and the `\_S5` object.
 
 use crate::bytes::{u16_at, u32_at, u64_at, u8_at};

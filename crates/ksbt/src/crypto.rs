@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! Bluetooth LE security toolbox (Core Spec Vol 3, Part H, 2.2): AES-128, AES-CMAC, the
 //! LE Secure Connections functions f4/f5/f6/g2, and P-256 ECDH.
 //!

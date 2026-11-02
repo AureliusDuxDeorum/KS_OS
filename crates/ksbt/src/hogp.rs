@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! HID over GATT Profile (HOGP) client: finds the HID service, reads the report map, maps
 //! report characteristics to report IDs, subscribes to input reports and decodes notifications.
 

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 #![no_main]
 //! Coverage-guided fuzzing of every firmware/device parser in `ksparse`.
 //! Run with: `cd fuzz && cargo +nightly fuzz run parsers`

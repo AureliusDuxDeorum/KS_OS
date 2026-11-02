@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! Physical memory manager: a bitmap frame allocator.
 //!
 //! One bit per 4 KiB frame (1 = in use). Only memory the bootloader reports as

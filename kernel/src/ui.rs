@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! The Stage 1 screen: the "OS operating" banner and two buttons.
 //!
 //! Buttons can be driven with the keyboard (Tab / arrows / Enter / Space, or

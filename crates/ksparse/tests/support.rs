@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! Builders for valid sample tables, shared by the integration tests.
 
 #![allow(dead_code)]

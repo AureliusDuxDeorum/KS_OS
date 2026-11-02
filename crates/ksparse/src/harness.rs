@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! Entry points shared by the host robustness tests and the fuzz targets.
 
 use crate::pci::{self, Config};

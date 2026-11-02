@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! ACPI MADT (multiple APIC description table) parser.
 //!
 //! Pure functions over a byte slice with strict bounds checks: malformed or

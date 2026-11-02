@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! ATT (Core Spec Vol 3, Part F): PDU opcodes, error codes, UUIDs and PDU builders.
 
 use alloc::vec::Vec;

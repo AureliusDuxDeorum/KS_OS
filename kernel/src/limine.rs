@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! Minimal Limine boot protocol bindings (base revision 5).
 //!
 //! Hand-written against `PROTOCOL.md` of the Limine boot protocol rather than

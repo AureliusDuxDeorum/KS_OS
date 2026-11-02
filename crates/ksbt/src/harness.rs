@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! Fuzz/robustness entry point: drives every parser and both client state machines with
 //! arbitrary bytes. The contract is simply "must return" — no panic, hang or out-of-bounds read.
 

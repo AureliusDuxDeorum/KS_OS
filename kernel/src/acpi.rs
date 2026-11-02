@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! ACPI: table discovery, PM timer and the S5 (soft-off) transition.
 //!
 //! The kernel only does the physical-memory access here; all parsing of the

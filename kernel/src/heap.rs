@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! Kernel heap: size-class slab allocator over the physical memory manager.
 //!
 //! * Requests up to 2 KiB are served from per-size-class free lists. Each class

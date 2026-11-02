@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! Interrupt Descriptor Table and CPU exception handling.
 //!
 //! Assembly stubs normalise every exception into a [`TrapFrame`] and call

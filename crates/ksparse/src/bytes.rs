@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! Bounds-checked little-endian readers.
 
 /// Reads a `u8` at `off`.

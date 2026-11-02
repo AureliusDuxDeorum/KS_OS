@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! Kernel virtual memory manager.
 //!
 //! Replaces the bootloader's page tables with tables the kernel builds and

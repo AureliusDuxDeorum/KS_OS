@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! Unified input events and the queue USB/Bluetooth HID drivers push into.
 //!
 //! PS/2 is still polled by the UI directly; every other source (xHCI HID now, Bluetooth HID

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! HCI (Core Spec Vol 4, Part E): command builders, event/ACL parsing, advertising data.
 //!
 //! All parsers take untrusted controller output and return `None` rather than panic.

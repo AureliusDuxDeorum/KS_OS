@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! Interrupt-safe spin lock.
 //!
 //! Disables interrupts on the local CPU while the lock is held and restores the

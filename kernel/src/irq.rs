@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! Interrupt vector allocation and dispatch for vectors 32..=255.
 //!
 //! Handlers are plain `fn(&mut TrapFrame)` registered in a lock-free table, so

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! USB HID class driver: keyboards and relative pointing devices feed the unified input queue.
 //!
 //! Report layouts are never assumed: the HID report descriptor is fetched, parsed by the fuzzed

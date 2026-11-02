@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! 4-level page-table construction and inspection.
 //!
 //! Used for the kernel's own address space ([`crate::vmm`]) and the EFI

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! HCI over USB: commands on the control endpoint, events on the interrupt IN endpoint, ACL data
 //! on the bulk endpoints (Bluetooth USB transport, Core Spec Vol 4, Part B).
 //!

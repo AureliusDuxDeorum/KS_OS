@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! USB descriptors and control-request helpers.
 //!
 //! Descriptors come from devices (untrusted): every length field is validated, walks are

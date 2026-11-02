@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! Fixed-capacity, allocation-free string buffer implementing `fmt::Write`.
 
 use core::fmt;

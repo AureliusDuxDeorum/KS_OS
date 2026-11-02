@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! Polling driver for the legacy i8042 PS/2 controller (keyboard and mouse).
 //!
 //! Interrupt-driven input arrives with the interrupt work in a later phase;

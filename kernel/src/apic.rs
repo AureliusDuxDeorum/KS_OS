@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! Local APIC driver (xAPIC MMIO or x2APIC MSR mode) for the boot CPU.
 //!
 //! Also silences the legacy 8259 PICs, configures the NMI pin from the MADT so

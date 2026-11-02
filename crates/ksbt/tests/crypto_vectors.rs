@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! Cryptographic functions against the Bluetooth Core Specification sample data
 //! (Vol 3, Part H, Appendix D) and RFC 4493.
 

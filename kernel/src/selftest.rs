@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! Boot-time self-tests selected through the kernel command line
 //! (`selftest=<name>`), used by the end-to-end test suite to prove the
 //! exception machinery works on real (emulated) hardware. Production images

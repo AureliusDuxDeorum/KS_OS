@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! Safe view over the information the bootloader hands us.
 
 use crate::limine::{self, Framebuffer, MemmapEntry};

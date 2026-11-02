@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! DMA-able memory for device rings, contexts and transfer buffers.
 //!
 //! Frames come from the PMM's contiguous allocator and are accessed through the HHDM.

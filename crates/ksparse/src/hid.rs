@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! HID report-descriptor parsing and input-report interpretation (HID 1.11).
 //!
 //! The descriptor is device-supplied and may be arbitrarily hostile, so every walk is

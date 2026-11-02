@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! End-to-end tests of the Bluetooth host stack against the simulated controller and keyboard.
 
 mod common;

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! Pure, allocation-light parsers for untrusted firmware and hardware data.
 //!
 //! Everything here is a function of a byte slice (or a closure reading device

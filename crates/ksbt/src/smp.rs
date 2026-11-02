@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! Security Manager Protocol (Core Spec Vol 3, Part H): LE Secure Connections pairing as the
 //! initiator.
 //!

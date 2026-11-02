@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! Bond storage format: what survives a reboot so that a paired device can reconnect and
 //! re-encrypt without pairing again.
 //!

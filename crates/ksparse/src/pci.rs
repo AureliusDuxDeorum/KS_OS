@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! PCI configuration-space decoding: headers, capabilities, BARs, MSI/MSI-X.
 //!
 //! Devices are untrusted: every value read from configuration space is validated, capability

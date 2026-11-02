@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! Global Descriptor Table and Task State Segment.
 //!
 //! Flat 64-bit segments plus a TSS whose IST slots give the double-fault,

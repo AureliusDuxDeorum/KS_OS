@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! MediaTek MT79xx Bluetooth bring-up: identify the chip, pick and download the patch firmware
 //! through the WMT vendor protocol, then enable the Bluetooth function.
 //!

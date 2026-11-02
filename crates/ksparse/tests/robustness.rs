@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! Randomised and exhaustive-mutation robustness tests: no input may panic or hang.
 //!
 //! These run on stable in `cargo test`; the same entry points are driven by the

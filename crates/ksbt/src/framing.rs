@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! Re-assembly of HCI packets from USB endpoint transfers.
 //!
 //! USB delivers HCI events over an interrupt endpoint and ACL data over bulk endpoints in

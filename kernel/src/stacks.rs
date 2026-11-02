@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! Kernel-owned stacks, each with an unmapped guard page below it.
 //!
 //! A stack overflow therefore faults immediately instead of silently

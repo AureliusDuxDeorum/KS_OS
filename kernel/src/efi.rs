@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! UEFI Runtime Services.
 //!
 //! The firmware stays resident after the bootloader exits boot services. We

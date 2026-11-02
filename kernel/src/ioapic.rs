@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! I/O APIC driver: routes global system interrupts (GSIs) to vectors on the boot CPU.
 
 use crate::boot::BootInfo;

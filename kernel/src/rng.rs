@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! Hardware random number generator (RDSEED, falling back to RDRAND).
 //!
 //! Cryptographic keys must never come from a weak source, so there is deliberately no software

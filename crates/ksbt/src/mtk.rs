@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! MediaTek Bluetooth controller support: patch-file parsing and the WMT vendor protocol codec.
 //!
 //! **Hardware-unverified.** The layouts below follow the publicly documented behaviour of the

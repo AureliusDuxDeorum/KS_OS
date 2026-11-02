@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! USB core: device enumeration, the device registry and class-driver binding.
 //!
 //! The xHCI driver ([`xhci`]) moves data; this module walks the topology, reads descriptors

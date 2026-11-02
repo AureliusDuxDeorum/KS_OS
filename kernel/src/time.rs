@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! Timekeeping: calibrated TSC clock, local APIC timer tick and sleeping.
 //!
 //! The ACPI PM timer (fixed 3.579545 MHz) is the reference used to calibrate

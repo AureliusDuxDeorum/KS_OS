@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! Thin, audited wrappers around privileged x86_64 instructions.
 //!
 //! This is the only module (besides hardware-facing drivers) that contains

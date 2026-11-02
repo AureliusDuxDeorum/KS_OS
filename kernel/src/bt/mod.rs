@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! Bluetooth: controller bring-up, scanning, pairing, bonded reconnection and HID input.
 //!
 //! [`init`] finds a controller among the enumerated USB devices and brings it up; [`service`] is

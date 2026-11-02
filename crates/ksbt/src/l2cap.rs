@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! L2CAP basic frames over LE ACL links: reassembly, fragmentation and LE signalling.
 
 use crate::hci::{build_acl, AclHeader};

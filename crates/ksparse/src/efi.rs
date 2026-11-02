@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! UEFI data structures handed over by firmware: memory-map descriptors, configuration
 //! tables and the Memory Attributes Table (MAT), plus the W^X policy derived from them.
 //!

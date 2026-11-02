@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! In-memory kernel log: a ring buffer that mirrors everything written to the serial console,
 //! so the log can be read on screen (key `L`) on machines without a serial port.
 

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 mod support;
 use ksparse::madt::{self, Polarity, Trigger};
 use ksparse::pci::{self, BarKind, Config};

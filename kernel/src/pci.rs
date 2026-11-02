@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! PCI / PCI Express: configuration access, bus enumeration, BARs, MSI and MSI-X.
 //!
 //! Configuration space is reached through ECAM (from the ACPI MCFG table) when the

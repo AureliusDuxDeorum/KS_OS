@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! Message-signalled interrupt (MSI / MSI-X) message composition.
 //!
 //! PCI devices raise an interrupt by writing `data` to `address`; for x86 the

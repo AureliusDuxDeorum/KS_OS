@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! Bluetooth host stack.
 //!
 //! Everything here is a pure function of bytes plus small traits for the pieces that touch the

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! ACPI MCFG table: where PCI Express enhanced configuration (ECAM) space lives.
 
 use crate::bytes::{u16_at, u64_at, u8_at};

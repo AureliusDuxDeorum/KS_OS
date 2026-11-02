@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: Apache-2.0
 # Adds Bluetooth firmware files to a KS_OS boot image, in place. No Rust toolchain needed.
 #
 #   ./add-bluetooth-firmware.sh KS_OS-vX.Y.Z.img  /path/to/firmware-folder
@@ -11,7 +12,7 @@
 set -euo pipefail
 
 if [ "$#" -ne 2 ]; then
-    sed -n '2,11p' "$0" | sed 's/^# \{0,1\}//'
+    sed -n '3,12p' "$0" | sed 's/^# \{0,1\}//'
     exit 2
 fi
 IMG=$1

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! KS_OS kernel — Stage 1: boot, announce "OS operating", power off / boot to UEFI setup.
 
 #![no_std]

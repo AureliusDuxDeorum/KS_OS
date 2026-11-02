@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! xHCI (USB 3.x) host controller driver.
 //!
 //! Owns controller reset (including BIOS hand-off), the command/event/transfer rings, device

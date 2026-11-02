@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! Linear-framebuffer renderer: rectangles, bitmap text and a software cursor.
 
 use crate::limine;

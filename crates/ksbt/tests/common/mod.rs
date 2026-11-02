@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! A simulated Bluetooth LE controller and HID keyboard peripheral, used to test the whole host
 //! stack. The peripheral side (GATT server, SMP responder, link-layer encryption check) is written
 //! independently of the host code paths it tests, sharing only the verified crypto functions.

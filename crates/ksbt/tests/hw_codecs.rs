@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! USB packet framing and the (hardware-unverified) MediaTek codec, against synthetic data.
 
 use ksbt::framing::{Assembler, Kind};

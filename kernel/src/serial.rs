@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! 16550 UART driver (COM1), used as the primary debug console.
 
 use crate::arch::{inb, outb};

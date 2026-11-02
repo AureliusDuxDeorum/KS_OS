@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! Kernel logging macros. Output goes to the COM1 serial port.
 
 macro_rules! kprint {

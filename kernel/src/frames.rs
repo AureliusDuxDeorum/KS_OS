@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! Frame source handle used by page-table code; backed by the global [`crate::pmm`].
 
 use crate::pmm;

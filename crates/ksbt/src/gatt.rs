@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! GATT client procedures over an ATT link: service, characteristic and descriptor discovery,
 //! long reads and writes.
 //!

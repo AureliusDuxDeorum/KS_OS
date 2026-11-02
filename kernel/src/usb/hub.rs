@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! USB hub class driver (high-speed and below; SuperSpeed hubs are reported as unsupported).
 
 use super::{enumerate, xhci, Device, UsbError};
