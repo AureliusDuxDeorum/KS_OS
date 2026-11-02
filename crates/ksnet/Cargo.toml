@@ -1,0 +1,22 @@
+[package]
+name = "ksnet"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "KS_OS networking: NIC abstraction, igc/virtio descriptor logic and the smoltcp-based IP stack (DHCP, DNS, ICMP, TCP) as pure, host-testable code."
+
+[dependencies]
+ksparse = { path = "../ksparse" }
+
+[dependencies.smoltcp]
+version = "0.14"
+default-features = false
+features = [
+  "auto-icmp-echo-reply",
+  "alloc", "medium-ethernet", "proto-ipv4", "proto-dhcpv4", "proto-dns",
+  "socket-tcp", "socket-udp", "socket-icmp", "socket-dhcpv4", "socket-dns",
+]
+
+[dev-dependencies]
+heapless = "0.9"
