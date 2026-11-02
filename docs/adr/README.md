@@ -30,3 +30,4 @@ Process: [ADR-0001](0001-record-architecture-decisions.md). Template: [template.
 | [0024](0024-usb-xhci-and-hid.md) | USB stack: xHCI, enumeration, hubs, HID and the on-screen kernel log | Accepted |
 | [0025](0025-bluetooth-host-stack.md) | Bluetooth host stack: design, security decisions and verification boundary | Accepted |
 | [0026](0026-release-process-and-versioning.md) | Release process and versioning (X.Y.Z) | Accepted |
+| [0027](0027-licensing.md) | Licensing: Apache-2.0 | Accepted |

@@ -44,3 +44,10 @@ Enter**, **P** (power off), **U** (UEFI setup), **L** (on-screen kernel log), or
 Work is organised as **Stages → Phases → Steps**. A **security hardening gate**
 sits between every pair of stages. See
 [ADR-0002](docs/adr/0002-staged-development-process.md).
+
+## Licence
+
+KS_OS is licensed under the [Apache License 2.0](LICENSE) (see [NOTICE](NOTICE) and
+[ADR-0027](docs/adr/0027-licensing.md)). The KS name and logos are not covered by that licence
+([TRADEMARKS.md](TRADEMARKS.md)). Third-party components are listed in the release's
+`THIRD-PARTY-LICENSES.txt`. Security reports: [SECURITY.md](SECURITY.md).
