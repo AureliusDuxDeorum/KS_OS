@@ -25,6 +25,7 @@ pub mod hogp;
 pub mod host;
 pub mod l2cap;
 pub mod mtk;
+pub mod policy;
 pub mod smp;
 
 /// A 48-bit Bluetooth device address with its type (public = 0, random = 1).

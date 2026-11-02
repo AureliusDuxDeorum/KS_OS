@@ -177,9 +177,9 @@ impl Ui {
         self.fb
             .draw_text_centered(h / 5 + 22 * s, info, s, GRAY_MID);
         let hint = if self.has_mouse {
-            "Click a button, or Tab / arrows + Enter.  P = power off, U = UEFI setup, L = log"
+            "Click a button, or Tab / arrows + Enter.  P power off, U UEFI setup, L log, B pair Bluetooth"
         } else {
-            "Tab / arrows + Enter.  P = power off, U = UEFI setup, L = log"
+            "Tab / arrows + Enter.  P power off, U UEFI setup, L log, B pair Bluetooth"
         };
         self.fb
             .draw_text_centered(h - 14 * s, hint, (s / 2).max(1), GRAY_MID);
@@ -428,6 +428,14 @@ impl Ui {
                         Key::Char(b'u') => return Action::BootToFirmware,
                         Key::Char(b'l') => {
                             self.show_log(ps2);
+                            continue;
+                        }
+                        Key::Char(b'b') if crate::bt::available() => {
+                            crate::bt::open_pairing_window(crate::bt::USER_WINDOW_MS);
+                            self.set_status(
+                                "Bluetooth pairing open for 60 s: put the device in pairing mode",
+                                Level::Info,
+                            );
                             continue;
                         }
                         _ => continue,

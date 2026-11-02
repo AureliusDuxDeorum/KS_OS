@@ -120,6 +120,14 @@ extern "C" fn kmain() -> ! {
         panic!("vmm: cannot build kernel address space: {e:?}");
     }
     kprintln!("vmm: kernel address space active, stack guard pages installed");
+    let prot = arch::enable_protections();
+    kprintln!(
+        "cpu: protections SMEP={} SMAP={} UMIP={} WP={}",
+        prot & arch::CR4_SMEP != 0,
+        prot & arch::CR4_SMAP != 0,
+        prot & arch::CR4_UMIP != 0,
+        arch::read_cr0() & arch::CR0_WP != 0
+    );
     heap::init(boot.hhdm);
 
     // The one line this stage exists to print.
@@ -214,6 +222,11 @@ extern "C" fn kmain() -> ! {
     usb::init(&boot);
     // Bluetooth controllers are USB devices: bring them up now that USB is enumerated.
     bt::init(&boot, efi.as_ref());
+    // Trust on first use: with no other keyboard/mouse the machine could never be controlled, so
+    // pairing is open for a while; otherwise the user must ask for it with `B` (ADR-0030 S-01).
+    if bt::available() && !ps2.has_keyboard && !ps2.has_mouse && usb::hid::bound_count() == 0 {
+        bt::open_pairing_window(bt::BOOTSTRAP_WINDOW_MS);
+    }
     // Network adapters (PCI): Ethernet NIC driver and the IP stack.
     net::init(&boot);
     for m in boot.modules() {

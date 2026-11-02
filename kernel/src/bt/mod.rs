@@ -16,11 +16,13 @@ use crate::sync::IrqMutex;
 use crate::time;
 use alloc::string::String;
 use alloc::vec::Vec;
+use core::sync::atomic::{AtomicU64, Ordering};
 use ksbt::bond::{Bond, BondStore};
 use ksbt::gatt;
 use ksbt::hci::{self, AdvReport};
 use ksbt::hogp::HogpDevice;
 use ksbt::host::Host;
+use ksbt::policy::{Candidate, Policy};
 use ksbt::smp::{self, io, PairingConfig, PairingUi};
 use ksbt::Address;
 use spin::Mutex;
@@ -29,7 +31,37 @@ use transport::UsbTransport;
 const SCAN_WINDOW_MS: u64 = 250;
 const SCAN_TOTAL_MS: u64 = 8000;
 const RESCAN_GAP_MS: u64 = 20_000;
+/// How long pairing stays open when no other input device exists (bootstrap) or after `B` (S-01).
+pub const BOOTSTRAP_WINDOW_MS: u64 = 120_000;
+pub const USER_WINDOW_MS: u64 = 60_000;
 const BONDS_NAME: [u16; 14] = efi::utf16("KSOS-BT-BONDS");
+
+/// Pairing with a *new* device is allowed only while this deadline (ms since boot) lies ahead.
+/// Without it, anyone in radio range could pair a fake keyboard (ADR-0030 S-01).
+static PAIR_UNTIL_MS: AtomicU64 = AtomicU64::new(0);
+
+fn now_ms() -> u64 {
+    time::now_ns() / 1_000_000
+}
+
+/// Opens (or extends) the window in which unknown HID devices may be paired.
+pub fn open_pairing_window(ms: u64) {
+    PAIR_UNTIL_MS.store(now_ms() + ms, Ordering::Relaxed);
+    // Scan again right away so the user does not wait for the next round.
+    if let Some(m) = MANAGER.lock().as_mut() {
+        m.next_scan_at = 0;
+    }
+    kprintln!("bt: pairing window open for {} s", ms / 1000);
+}
+
+pub fn pairing_window_open() -> bool {
+    now_ms() < PAIR_UNTIL_MS.load(Ordering::Relaxed)
+}
+
+/// Whether a Bluetooth controller is up (so the pairing key is meaningful).
+pub fn available() -> bool {
+    MANAGER.lock().is_some()
+}
 
 struct Connected {
     handle: u16,
@@ -47,6 +79,7 @@ struct Manager {
     scan_started: Option<u64>,
     next_scan_at: u64,
     local: Address,
+    policy: Policy,
 }
 
 // SAFETY: the manager is only ever used from the main (UI) context; the raw pointer inside `Efi`
@@ -59,6 +92,11 @@ static STATUS: IrqMutex<(String, bool)> = IrqMutex::new((String::new(), false));
 fn set_status(s: impl Into<String>) {
     let s = s.into();
     kprintln!("bt: {s}");
+    *STATUS.lock() = (s, true);
+}
+
+/// Like [`set_status`] but never written to the serial log or log ring.
+fn set_status_private(s: String) {
     *STATUS.lock() = (s, true);
 }
 
@@ -78,7 +116,9 @@ struct KernelUi;
 impl PairingUi for KernelUi {
     fn display_passkey(&mut self, passkey: u32) {
         let msg = alloc::format!("Pairing: type {passkey:06} on the keyboard, then press Enter");
-        set_status(msg.clone());
+        // The passkey goes to the screen only, never to the serial log or log ring (S-06).
+        kprintln!("bt: pairing passkey displayed on screen");
+        set_status_private(msg.clone());
         crate::fb::show_notice(&msg);
     }
     fn confirm_numeric(&mut self, _value: u32) -> bool {
@@ -185,6 +225,7 @@ pub fn init(boot: &BootInfo, efi: Option<&Efi>) {
                     scan_started: None,
                     next_scan_at: time::now_ns() / 1_000_000 + 500,
                     local: info.address,
+                    policy: Policy::new(),
                 };
                 *MANAGER.lock() = Some(m);
                 set_status("Bluetooth ready");
@@ -265,31 +306,57 @@ impl Manager {
 
     fn connect_candidates(&mut self) {
         let candidates = core::mem::take(&mut self.candidates);
-        for r in candidates {
-            if self.connected.iter().any(|c| c.address == r.address) {
-                continue;
-            }
-            let adv = hci::parse_adv_data(&r.data);
+        let now = self.now();
+        let window = pairing_window_open();
+        let info: Vec<(Candidate, hci::AdvInfo)> = candidates
+            .iter()
+            .map(|r| {
+                let adv = hci::parse_adv_data(&r.data);
+                let c = Candidate {
+                    address: r.address,
+                    bonded: self.bonds.find_for_advertiser(&r.address).is_some(),
+                    pairable_hid: adv.is_hid() && adv.discoverable(),
+                    already_connected: self.connected.iter().any(|c| c.address == r.address),
+                };
+                (c, adv)
+            })
+            .collect();
+        let plain: Vec<Candidate> = info.iter().map(|(c, _)| *c).collect();
+        for i in self.policy.plan(now, window, &plain) {
+            let r = &candidates[i];
+            let adv = &info[i].1;
             let bonded = self
                 .bonds
                 .find_for_advertiser(&r.address)
                 .map(|b| (b.address, b.ltk));
-            if bonded.is_none() && !(adv.is_hid() && adv.discoverable()) {
-                continue; // not a pairing-mode HID device and not one we know
-            }
             let label = if adv.name.is_some() {
                 adv.name_lossy()
             } else {
                 alloc::format!("{:02x?}", r.address.bytes)
             };
+            let was_bonded = bonded.is_some();
             set_status(alloc::format!("Connecting to {label}..."));
-            match self.bring_up(&r, bonded.map(|(_, ltk)| ltk), &adv) {
-                Ok(()) => set_status(alloc::format!("Connected: {label}")),
-                Err(e) => set_status(alloc::format!("{label}: {e}")),
+            match self.bring_up(r, bonded.map(|(_, ltk)| ltk), adv) {
+                Ok(()) => {
+                    set_status(alloc::format!("Connected: {label}"));
+                    if !was_bonded {
+                        // Leave room for a second device (keyboard + mouse), then close.
+                        PAIR_UNTIL_MS.store(self.now() + USER_WINDOW_MS, Ordering::Relaxed);
+                    }
+                }
+                Err(e) => {
+                    set_status(alloc::format!("{label}: {e}"));
+                    let t = self.now();
+                    self.policy.failed(r.address, t);
+                }
             }
         }
         if self.connected.is_empty() {
-            set_status("No Bluetooth input device connected");
+            if window {
+                set_status("No Bluetooth input device connected (pairing is open)");
+            } else {
+                set_status("No Bluetooth input device connected (press B to allow pairing)");
+            }
         }
     }
 
