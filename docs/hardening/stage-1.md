@@ -140,3 +140,17 @@ S-15 (unauthenticated boot chain). See the ADR for the full table.
   (ADR-0007). Compensating controls: guard pages on every kernel stack, `forbid(unsafe)` libraries,
   `overflow-checks`, W^X, SMEP/SMAP/UMIP. Revisit when `-C stack-protector` stabilises.
 
+## 14. Addendum (2026-11-02, Phase E — verified boot chain, ADR-0030 S-15)
+- `limine.conf` pins the kernel and every firmware module by BLAKE2b-512 (`path: ...#hash`) and the hash of
+  `limine.conf` is enrolled into `BOOTX64.EFI` (a Rust port of `limine enroll-config`, `xtask/src/bootchain.rs`).
+  QEMU test `boot-chain` flips one byte in the kernel, the config and the enrolled hash: Limine panics each time
+  ("Blake2b hash ... does not match", "CHECKSUM MISMATCH FOR CONFIG FILE") and the kernel never starts.
+- `add-bluetooth-firmware.sh` keeps the chain valid (pins the new blobs, re-enrols the config hash); test `fw-script`.
+- Secure Boot uses the **owner's own keys**: `secure-boot.sh keys|sign` ships in every release; the private keys are
+  generated and stay on the owner's machine. Test `secure-boot` covers key generation, signing, `sbverify` and that a
+  signed image still boots. **Not yet automated here:** the enforcing-firmware half (unsigned image refused) because it
+  needs `virt-firmware` (`virt-fw-vars`) to enrol keys into an OVMF variable store; the test is written and runs as
+  soon as `target/venv/bin/virt-fw-vars` exists.
+- Residual risk: with Secure Boot **off**, an attacker who can replace `BOOTX64.EFI` *and* `limine.conf` consistently can
+  still boot their own kernel; Secure Boot with owner keys closes that. Signed images are not byte-reproducible (PKCS#7 time).
+

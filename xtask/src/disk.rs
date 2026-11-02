@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Disk image construction: a FAT ESP wrapped in a GPT, built byte-for-byte reproducibly.
 
+use crate::bootchain;
 use crate::firmware::Blob;
 use crate::limine::Limine;
 use crate::Result;
@@ -11,12 +12,18 @@ const ESP_MIB: usize = 32;
 const FIRST_LBA: u64 = 2048;
 
 /// Renders `limine.conf`; `cmdline` is passed to the kernel (empty for production images).
-fn limine_conf(cmdline: &str, modules: &[Blob]) -> String {
-    let mut conf = String::from(
-        "timeout: 0\neditor_enabled: no\nserial: yes\n\n/KS_OS\n    protocol: limine\n    kaslr: yes\n    path: boot():/boot/kernel\n",
+fn limine_conf(cmdline: &str, kernel: &[u8], modules: &[Blob]) -> String {
+    // Every loaded file is pinned by its BLAKE2b-512 hash (ADR-0030 S-15).
+    let mut conf = format!(
+        "timeout: 0\neditor_enabled: no\nserial: yes\n\n/KS_OS\n    protocol: limine\n    kaslr: yes\n    path: boot():/boot/kernel#{}\n",
+        bootchain::blake2b_hex(kernel)
     );
     for m in modules {
-        conf.push_str(&format!("    module_path: boot():/boot/fw/{}\n", m.name));
+        conf.push_str(&format!(
+            "    module_path: boot():/boot/fw/{}#{}\n",
+            m.name,
+            bootchain::blake2b_hex(&m.data)
+        ));
     }
     if !cmdline.is_empty() {
         conf.push_str(&format!("    cmdline: {cmdline}\n"));
@@ -47,12 +54,17 @@ pub fn make_esp(
             f.flush()?;
             Ok(())
         };
-        write("EFI/BOOT/BOOTX64.EFI", &limine.bootx64)?;
+        // The config hash is enrolled into the bootloader, so neither can be changed alone.
+        let conf = limine_conf(cmdline, kernel, modules);
+        write(
+            "EFI/BOOT/BOOTX64.EFI",
+            &bootchain::enroll_config(&limine.bootx64, conf.as_bytes())?,
+        )?;
         root.create_dir("boot/fw")?;
         for m in modules {
             write(&format!("boot/fw/{}", m.name), &m.data)?;
         }
-        write("limine.conf", limine_conf(cmdline, modules).as_bytes())?;
+        write("limine.conf", conf.as_bytes())?;
         write("boot/kernel", kernel)?;
     }
     Ok(storage.into_inner())

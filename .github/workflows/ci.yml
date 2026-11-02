@@ -58,7 +58,7 @@ jobs:
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
       - name: Install QEMU and OVMF
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends qemu-system-x86 ovmf
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends qemu-system-x86 ovmf sbsigntool efitools mtools zstd openssl
       - name: Rust toolchain (pinned by rust-toolchain.toml)
         run: rustup show
       - name: End-to-end boot, power-off and UEFI-setup tests

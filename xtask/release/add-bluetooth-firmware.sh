@@ -8,17 +8,21 @@
 # *.bin or *.bin.zst are picked up (zstd files are decompressed first). The firmware is NOT
 # redistributed with KS_OS, so it has to come from your own system.
 #
-# Needs: mtools (mcopy, mtype) and zstd.   Debian/Ubuntu: sudo apt install mtools zstd
+# The boot chain is hash-pinned (ADR-0030 S-15): this script pins each firmware file in limine.conf
+# and re-enrols the hash of the new limine.conf in the bootloader. If you use Secure Boot, run
+# secure-boot.sh sign AFTER this script (changing the bootloader invalidates an earlier signature).
+#
+# Needs: mtools (mcopy, mtype), zstd and coreutils (b2sum).   Debian/Ubuntu: sudo apt install mtools zstd
 set -euo pipefail
 
 if [ "$#" -ne 2 ]; then
-    sed -n '3,12p' "$0" | sed 's/^# \{0,1\}//'
+    sed -n '3,18p' "$0" | sed 's/^# \{0,1\}//'
     exit 2
 fi
 IMG=$1
 FWDIR=$2
 
-for tool in mcopy mtype mdel mmd zstd sha256sum; do
+for tool in mcopy mtype mdel mmd zstd sha256sum b2sum dd grep; do
     command -v "$tool" >/dev/null || { echo "error: '$tool' is not installed (sudo apt install mtools zstd)"; exit 1; }
 done
 [ -f "$IMG" ] || { echo "error: image '$IMG' not found"; exit 1; }
@@ -53,9 +57,19 @@ done < <(find "$FWDIR" -maxdepth 3 -type f \( -name '*.bin' -o -name '*.bin.zst'
 mcopy -o -i "$PART" -s "$TMP"/*.bin ::/boot/fw/
 mtype -i "$PART" ::/limine.conf | grep -v 'module_path:' > "$TMP/limine.conf"
 for f in "$TMP"/*.bin; do
-    printf '    module_path: boot():/boot/fw/%s\n' "$(basename "$f")" >> "$TMP/limine.conf"
+    printf '    module_path: boot():/boot/fw/%s#%s\n' "$(basename "$f")" "$(b2sum "$f" | cut -d' ' -f1)" >> "$TMP/limine.conf"
 done
 mcopy -o -i "$PART" "$TMP/limine.conf" ::/limine.conf
+
+# Enrol the BLAKE2b of the new limine.conf in BOOTX64.EFI (what `limine enroll-config` does):
+# the 128 hex characters that follow the marker are overwritten.
+mcopy -o -i "$PART" ::/EFI/BOOT/BOOTX64.EFI "$TMP/BOOTX64.EFI"
+marker_off=$(grep -abo '++CONFIG_B2SUM_SIGNATURE++' "$TMP/BOOTX64.EFI" | head -n1 | cut -d: -f1)
+[ -n "$marker_off" ] || { echo "error: config-hash marker not found in BOOTX64.EFI"; exit 1; }
+printf '%s' "$(b2sum "$TMP/limine.conf" | cut -d' ' -f1)" |
+    dd of="$TMP/BOOTX64.EFI" bs=1 seek=$((marker_off + 26)) conv=notrunc status=none
+mcopy -o -i "$PART" "$TMP/BOOTX64.EFI" ::/EFI/BOOT/BOOTX64.EFI
+echo "boot chain: limine.conf re-pinned and its hash re-enrolled"
 
 echo
 echo "done: $count firmware file(s) added to $IMG"

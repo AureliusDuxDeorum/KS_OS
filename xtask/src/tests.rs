@@ -673,6 +673,277 @@ fn test_kaslr(ctx: &Ctx, _image: &Path) -> Result<()> {
     Ok(())
 }
 
+/// Boots a (possibly tampered) image and reports whether the kernel started.
+fn boots(ctx: &Ctx, img: &Path, tag: &str) -> Result<(bool, String)> {
+    let s = qemu::spawn_test_with(ctx, img, tag, &["-cpu", "max"])?;
+    let started = wait_for(&s, "OS operating", Duration::from_secs(25)).is_ok();
+    let log = serial(&s);
+    drop(s);
+    Ok((started, log))
+}
+
+/// Strips terminal escape sequences (Limine paints its panic screen character by character).
+fn plain(log: &str) -> String {
+    let mut out = String::new();
+    let mut chars = log.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '\x1b' {
+            for n in chars.by_ref() {
+                if n.is_ascii_alphabetic() {
+                    break;
+                }
+            }
+        } else if !c.is_control() || c == '\n' {
+            out.push(c);
+        }
+    }
+    out
+}
+
+fn find(hay: &[u8], needle: &[u8]) -> Result<usize> {
+    hay.windows(needle.len())
+        .position(|w| w == needle)
+        .ok_or_else(|| "tamper target not found in the image".into())
+}
+
+fn test_boot_chain_integrity(ctx: &Ctx, _image: &Path) -> Result<()> {
+    let dir = ctx.target_dir();
+    let good = dir.join("ks_os-chain-good.img");
+    crate::write_image(ctx, "", &good)?;
+    let bytes = std::fs::read(&good)?;
+    let kernel = std::fs::read(ctx.kernel_elf())?;
+
+    let (ok, log) = boots(ctx, &good, "t-chain-good")?;
+    if !ok {
+        return Err(format!("the untampered image must boot; log:\n{log}").into());
+    }
+
+    let mut cases: Vec<(&str, Vec<u8>)> = Vec::new();
+    // 1. A byte changed inside the kernel image on the ESP.
+    let mut b = bytes.clone();
+    let at = find(&b, kernel.get(..4096).ok_or("kernel too small")?)? + 0x2000;
+    if let Some(x) = b.get_mut(at) {
+        *x ^= 0xFF;
+    }
+    cases.push(("modified kernel", b));
+    // 2. The boot configuration edited (e.g. a different kernel command line).
+    let mut b = bytes.clone();
+    let at = find(&b, b"timeout: 0")? + 9;
+    if let Some(x) = b.get_mut(at) {
+        *x = b'1';
+    }
+    cases.push(("modified limine.conf", b));
+    // 3. The enrolled config hash inside the bootloader replaced (attacker swaps config + bootloader hash
+    //    would still need a valid signature under Secure Boot; here: a wrong hash must stop the boot).
+    let mut b = bytes.clone();
+    let at = find(&b, b"++CONFIG_B2SUM_SIGNATURE++")? + 26;
+    if let Some(x) = b.get_mut(at) {
+        *x = if *x == b'0' { b'1' } else { b'0' };
+    }
+    cases.push(("modified enrolled config hash", b));
+
+    for (name, data) in cases {
+        let img = dir.join("ks_os-chain-bad.img");
+        std::fs::write(&img, data)?;
+        let (started, log) = boots(ctx, &img, "t-chain-bad")?;
+        let _ = std::fs::remove_file(&img);
+        if started {
+            return Err(format!(
+                "{name}: the kernel booted although the boot chain was tampered with"
+            )
+            .into());
+        }
+        let shown = plain(&log);
+        let low = shown.to_lowercase();
+        if !low.contains("hash") && !low.contains("panic") {
+            return Err(format!(
+                "{name}: no integrity failure reported by the bootloader; log:\n{shown}"
+            )
+            .into());
+        }
+        let why = shown
+            .lines()
+            .find(|l| {
+                let l = l.to_lowercase();
+                l.contains("hash") || l.contains("panic")
+            })
+            .unwrap_or("")
+            .trim()
+            .to_owned();
+        println!("     {name}: refused ({why})");
+    }
+    let _ = std::fs::remove_file(&good);
+    println!("ok   verified boot chain: a modified kernel, config or enrolled hash stops the boot");
+    Ok(())
+}
+
+/// Runs the shipped `secure-boot.sh`. Part 1 (signing tools only): keys are created, the bootloader in the
+/// image is signed and verifies, and the signed image still boots with Secure Boot off. Part 2 (needs
+/// `target/venv` with `virt-firmware` to enrol keys into OVMF): enforcing Secure Boot boots the signed
+/// image, refuses the unsigned one, and the signed bootloader still refuses a tampered kernel.
+fn test_secure_boot(ctx: &Ctx, _image: &Path) -> Result<()> {
+    use std::process::Command;
+    let work = ctx.target_dir().join("secureboot");
+    let _ = std::fs::remove_dir_all(&work);
+    std::fs::create_dir_all(&work)?;
+    let script = ctx.root.join("xtask/release/secure-boot.sh");
+    let have = |t: &str| {
+        Command::new("sh")
+            .args(["-c", &format!("command -v {t}")])
+            .output()
+            .is_ok_and(|o| o.status.success())
+    };
+    if !have("sbsign") || !have("cert-to-efi-sig-list") || !have("mcopy") {
+        println!("skip Secure Boot test (needs sbsigntool, efitools and mtools)");
+        return Ok(());
+    }
+    let keys = work.join("keys");
+    let (keys_s, work_s) = (
+        keys.to_string_lossy().into_owned(),
+        work.to_string_lossy().into_owned(),
+    );
+    let run = |args: &[&str]| -> Result<()> {
+        let st = Command::new(&script).args(args).status()?;
+        if st.success() {
+            Ok(())
+        } else {
+            Err(format!("secure-boot.sh {args:?} failed").into())
+        }
+    };
+    run(&["keys", &keys_s])?;
+
+    let unsigned = work.join("unsigned.img");
+    crate::write_image(ctx, "", &unsigned)?;
+    let signed = work.join("signed.img");
+    std::fs::copy(&unsigned, &signed)?;
+    run(&["sign", &signed.to_string_lossy(), &keys_s])?;
+    let (ok, log) = boots(ctx, &signed, "t-sb-signed-off")?;
+    if !ok {
+        return Err(format!(
+            "a signed image must still boot with Secure Boot off; log:\n{}",
+            plain(&log)
+        )
+        .into());
+    }
+
+    let venv_tool = ctx.target_dir().join("venv/bin/virt-fw-vars");
+    let fw = qemu::find_ovmf()?;
+    let secboot_code = fw.code.with_file_name("OVMF_CODE_4M.secboot.fd");
+    if !venv_tool.exists() || !secboot_code.exists() {
+        println!(
+            "ok   Secure Boot signing: secure-boot.sh keys/sign work and the signed image boots"
+        );
+        println!("skip Secure Boot enforcement test (needs virt-firmware in target/venv and OVMF_CODE_4M.secboot.fd)");
+        let _ = std::fs::remove_dir_all(&work);
+        return Ok(());
+    }
+    let guid = std::fs::read_to_string(keys.join("owner-guid.txt"))?
+        .trim()
+        .to_owned();
+    let vars = work.join("OVMF_VARS.secboot.fd");
+    let st = Command::new(&venv_tool)
+        .arg("--input")
+        .arg(fw.vars_template.with_file_name("OVMF_VARS_4M.fd"))
+        .arg("--output")
+        .arg(&vars)
+        .args(["--set-pk", &guid])
+        .arg(keys.join("PK.crt"))
+        .args(["--add-kek", &guid])
+        .arg(keys.join("KEK.crt"))
+        .args(["--add-db", &guid])
+        .arg(keys.join("db.crt"))
+        .arg("--secure-boot")
+        .status()?;
+    if !st.success() {
+        return Err("virt-fw-vars failed".into());
+    }
+    std::env::set_var("OVMF_CODE", &secboot_code);
+    std::env::set_var("OVMF_VARS", &vars);
+    let outcome = (|| -> Result<()> {
+        let (ok, log) = boots(ctx, &signed, "t-sb-signed")?;
+        if !ok {
+            return Err(format!(
+                "the signed image must boot under Secure Boot; log:\n{}",
+                plain(&log)
+            )
+            .into());
+        }
+        if boots(ctx, &unsigned, "t-sb-unsigned")?.0 {
+            return Err("the UNSIGNED image booted under enforcing Secure Boot".into());
+        }
+        let mut bytes = std::fs::read(&signed)?;
+        let kernel = std::fs::read(ctx.kernel_elf())?;
+        let at = find(&bytes, kernel.get(..4096).ok_or("kernel too small")?)? + 0x2000;
+        if let Some(x) = bytes.get_mut(at) {
+            *x ^= 0xFF;
+        }
+        let bad = work.join("signed-bad-kernel.img");
+        std::fs::write(&bad, bytes)?;
+        if boots(ctx, &bad, "t-sb-tampered")?.0 {
+            return Err("a signed image with a modified kernel booted".into());
+        }
+        Ok(())
+    })();
+    std::env::remove_var("OVMF_CODE");
+    std::env::remove_var("OVMF_VARS");
+    outcome?;
+    let _ = std::fs::remove_dir_all(&work);
+    println!("ok   Secure Boot: signed image boots; unsigned and tampered images are refused");
+    let _ = work_s;
+    Ok(())
+}
+
+/// The shipped firmware script must keep the hash-pinned boot chain valid: it pins the new module in
+/// `limine.conf` and re-enrols the config hash, so the modified image still boots and the kernel sees the file.
+fn test_firmware_script(ctx: &Ctx, _image: &Path) -> Result<()> {
+    use std::process::Command;
+    let ok = |t: &str| {
+        Command::new("sh")
+            .args(["-c", &format!("command -v {t}")])
+            .output()
+            .is_ok_and(|o| o.status.success())
+    };
+    if !(ok("mcopy") && ok("zstd") && ok("b2sum")) {
+        println!("skip firmware script test (needs mtools, zstd and b2sum)");
+        return Ok(());
+    }
+    let work = ctx.target_dir().join("fwscript");
+    let _ = std::fs::remove_dir_all(&work);
+    std::fs::create_dir_all(work.join("fw"))?;
+    std::fs::write(
+        work.join("fw/SCRIPT_FIRMWARE_0.bin"),
+        (0..2000u32).map(|i| (i * 13) as u8).collect::<Vec<_>>(),
+    )?;
+    let img = work.join("fw.img");
+    crate::write_image(ctx, "", &img)?;
+    let st = Command::new(ctx.root.join("xtask/release/add-bluetooth-firmware.sh"))
+        .arg(&img)
+        .arg(work.join("fw"))
+        .status()?;
+    if !st.success() {
+        return Err("add-bluetooth-firmware.sh failed".into());
+    }
+    let (booted, log) = boots(ctx, &img, "t-fwscript")?;
+    if !booted {
+        return Err(format!(
+            "the image modified by the firmware script must boot; log:\n{}",
+            plain(&log)
+        )
+        .into());
+    }
+    let s = qemu::spawn_test_with(ctx, &img, "t-fwscript2", &["-cpu", "max"])?;
+    let r = wait_for(
+        &s,
+        "boot: module SCRIPT_FIRMWARE_0.bin (2000 bytes)",
+        Duration::from_secs(60),
+    );
+    drop(s);
+    r.map_err(|_| "the kernel never saw the firmware module added by the script")?;
+    let _ = std::fs::remove_dir_all(&work);
+    println!("ok   add-bluetooth-firmware.sh re-pins limine.conf and re-enrols its hash; the image still boots");
+    Ok(())
+}
+
 fn test_net_virtio(ctx: &Ctx, _image: &Path) -> Result<()> {
     let log = net_test(ctx, "virtio-net-pci,disable-legacy=on", "virtio-net")?;
     expect_all(
@@ -714,7 +985,7 @@ fn test_net_igb(ctx: &Ctx, _image: &Path) -> Result<()> {
 pub fn run_all(ctx: &Ctx, image: &Path) -> Result<()> {
     let mut failed = 0;
     type TestFn = fn(&Ctx, &Path) -> Result<()>;
-    let tests: [(&str, TestFn); 27] = [
+    let tests: [(&str, TestFn); 30] = [
         ("ksparse", test_ksparse_host),
         ("boot", test_boot_banner),
         ("poweroff-key", test_power_off_key),
@@ -738,6 +1009,9 @@ pub fn run_all(ctx: &Ctx, image: &Path) -> Result<()> {
         ("nmi-real", test_nmi_real),
         ("cpu-protections", test_cpu_protections),
         ("kaslr", test_kaslr),
+        ("boot-chain", test_boot_chain_integrity),
+        ("secure-boot", test_secure_boot),
+        ("fw-script", test_firmware_script),
         ("net-virtio", test_net_virtio),
         ("net-igb", test_net_igb),
         ("memory", test_memory_selftests),

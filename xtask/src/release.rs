@@ -12,6 +12,7 @@ use std::path::Path;
 
 const README: &str = include_str!("../release/README.txt.in");
 const ADD_FIRMWARE: &str = include_str!("../release/add-bluetooth-firmware.sh");
+const SECURE_BOOT: &str = include_str!("../release/secure-boot.sh");
 
 fn sha256_hex(data: &[u8]) -> String {
     Sha256::digest(data).iter().fold(String::new(), |mut s, b| {
@@ -38,13 +39,13 @@ pub fn run(ctx: &Ctx) -> Result<()> {
 
     std::fs::write(dir.join("README.txt"), README.replace("{version}", version))?;
     std::fs::write(dir.join("add-bluetooth-firmware.sh"), ADD_FIRMWARE)?;
+    std::fs::write(dir.join("secure-boot.sh"), SECURE_BOOT)?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(
-            dir.join("add-bluetooth-firmware.sh"),
-            std::fs::Permissions::from_mode(0o755),
-        )?;
+        for script in ["add-bluetooth-firmware.sh", "secure-boot.sh"] {
+            std::fs::set_permissions(dir.join(script), std::fs::Permissions::from_mode(0o755))?;
+        }
     }
     // Licence texts travel with every binary release: ours, the notice, and every third-party component.
     std::fs::copy(ctx.root.join("LICENSE"), dir.join("LICENSE"))?;
@@ -59,6 +60,7 @@ pub fn run(ctx: &Ctx) -> Result<()> {
     for f in [
         img_name.as_str(),
         "add-bluetooth-firmware.sh",
+        "secure-boot.sh",
         "README.txt",
         "LICENSE",
         "NOTICE",

@@ -18,6 +18,7 @@
 //! Environment: `QEMU_EXTRA="-d int -D log"` appends QEMU arguments; `OVMF_CODE`/`OVMF_VARS`
 //! override firmware discovery.
 
+mod bootchain;
 mod disk;
 mod firmware;
 mod limine;
