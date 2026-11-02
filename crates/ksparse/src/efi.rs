@@ -62,7 +62,7 @@ impl MemoryDescriptor {
 
     /// Exclusive end address of a sane descriptor.
     pub fn end(&self) -> u64 {
-        self.phys + self.pages * 4096
+        self.phys.saturating_add(self.pages.saturating_mul(4096))
     }
 }
 
@@ -79,14 +79,18 @@ pub fn descriptors(
 
 /// Number of bytes `n` configuration-table entries occupy, or `None` if `n` is implausible.
 pub fn config_tables_len(n: usize) -> Option<usize> {
-    (n <= MAX_CONFIG_TABLES).then(|| n * CONFIG_ENTRY_SIZE)
+    if n <= MAX_CONFIG_TABLES {
+        n.checked_mul(CONFIG_ENTRY_SIZE)
+    } else {
+        None
+    }
 }
 
 /// Looks up `guid` (16 raw bytes) in a configuration-table array and returns its pointer.
 pub fn find_config_table(tables: &[u8], guid: &[u8; 16]) -> Option<u64> {
     tables
         .chunks_exact(CONFIG_ENTRY_SIZE)
-        .find(|e| &e[..16] == guid)
+        .find(|e| e.get(..16) == Some(&guid[..]))
         .and_then(|e| u64_at(e, 16))
 }
 

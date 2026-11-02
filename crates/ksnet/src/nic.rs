@@ -55,9 +55,10 @@ impl<N: Nic> TxToken for Tx<'_, N> {
     fn consume<R, F: FnOnce(&mut [u8]) -> R>(self, len: usize, f: F) -> R {
         let mut buf = [0u8; MAX_FRAME];
         let len = len.min(MAX_FRAME);
-        let r = f(&mut buf[..len]);
+        let frame = buf.get_mut(..len).unwrap_or(&mut []);
+        let r = f(frame);
         // A full ring simply drops the frame; the protocols above retransmit.
-        let _ = self.nic.transmit(&buf[..len]);
+        let _ = self.nic.transmit(buf.get(..len).unwrap_or(&[]));
         r
     }
 }
@@ -75,7 +76,8 @@ impl<N: Nic> Device for NicDevice<N> {
     fn receive(&mut self, _ts: Instant) -> Option<(Self::RxToken<'_>, Self::TxToken<'_>)> {
         let n = self.nic.receive(&mut self.rx)?;
         let Self { nic, rx } = self;
-        Some((Rx { frame: &rx[..n] }, Tx { nic }))
+        let frame = rx.get(..n)?;
+        Some((Rx { frame }, Tx { nic }))
     }
 
     fn transmit(&mut self, _ts: Instant) -> Option<Self::TxToken<'_>> {

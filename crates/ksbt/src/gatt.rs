@@ -7,6 +7,7 @@
 
 use crate::att::{self, Uuid};
 use alloc::vec::Vec;
+use ksparse::bytes::{tail, u16_at, u8_at};
 
 /// Failure of the underlying link or of an ATT procedure.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -63,10 +64,10 @@ pub fn exchange_mtu(link: &mut impl AttLink, ours: u16) -> u16 {
     let Ok(rsp) = link.request(&att::mtu_request(ours)) else {
         return att::DEFAULT_MTU;
     };
-    if check_response(&rsp, att::OP_MTU_RSP).is_err() || rsp.len() < 3 {
+    if check_response(&rsp, att::OP_MTU_RSP).is_err() {
         return att::DEFAULT_MTU;
     }
-    u16::from_le_bytes([rsp[1], rsp[2]]).clamp(att::DEFAULT_MTU, ours)
+    u16_at(&rsp, 1).map_or(att::DEFAULT_MTU, |m| m.clamp(att::DEFAULT_MTU, ours))
 }
 
 /// Discovers all primary services.
@@ -94,10 +95,10 @@ pub fn discover_services(link: &mut impl AttLink) -> Result<Vec<Service>, Error>
             return Err(Error::Malformed);
         }
         let mut last_end = 0;
-        for e in rsp[2..].chunks_exact(item) {
+        for e in tail(&rsp, 2).chunks_exact(item) {
             let (s, en) = (
-                u16::from_le_bytes([e[0], e[1]]),
-                u16::from_le_bytes([e[2], e[3]]),
+                u16_at(e, 0).ok_or(Error::Malformed)?,
+                u16_at(e, 2).ok_or(Error::Malformed)?,
             );
             if s == 0 || en < s {
                 return Err(Error::Malformed);
@@ -105,14 +106,14 @@ pub fn discover_services(link: &mut impl AttLink) -> Result<Vec<Service>, Error>
             out.push(Service {
                 start: s,
                 end: en,
-                uuid: Uuid::from_le(&e[4..]).ok_or(Error::Malformed)?,
+                uuid: Uuid::from_le(tail(e, 4)).ok_or(Error::Malformed)?,
             });
             last_end = en;
         }
         if last_end < start || last_end == 0xFFFF {
             break; // no progress, or the last service ends at the top of the handle space
         }
-        start = last_end + 1;
+        start = last_end.saturating_add(1);
     }
     Ok(out)
 }
@@ -148,13 +149,13 @@ pub fn discover_characteristics(
             return Err(Error::Malformed);
         }
         let mut last = 0;
-        for e in rsp[2..].chunks_exact(item) {
-            let decl = u16::from_le_bytes([e[0], e[1]]);
+        for e in tail(&rsp, 2).chunks_exact(item) {
+            let decl = u16_at(e, 0).ok_or(Error::Malformed)?;
             out.push(Characteristic {
                 decl_handle: decl,
-                properties: e[2],
-                value_handle: u16::from_le_bytes([e[3], e[4]]),
-                uuid: Uuid::from_le(&e[5..]).ok_or(Error::Malformed)?,
+                properties: u8_at(e, 2).ok_or(Error::Malformed)?,
+                value_handle: u16_at(e, 3).ok_or(Error::Malformed)?,
+                uuid: Uuid::from_le(tail(e, 5)).ok_or(Error::Malformed)?,
             });
             last = decl;
         }
@@ -191,17 +192,17 @@ pub fn discover_descriptors(
             return Err(Error::Att(att::parse_error(&rsp).map_or(0, |e| e.2)));
         }
         check_response(&rsp, att::OP_FIND_INFO_RSP)?;
-        let width = match rsp.get(1) {
+        let width: usize = match rsp.get(1) {
             Some(1) => 2,
             Some(2) => 16,
             _ => return Err(Error::Malformed),
         };
         let mut last = 0;
-        for e in rsp[2..].chunks_exact(2 + width) {
-            let handle = u16::from_le_bytes([e[0], e[1]]);
+        for e in tail(&rsp, 2).chunks_exact(width.saturating_add(2)) {
+            let handle = u16_at(e, 0).ok_or(Error::Malformed)?;
             out.push(Descriptor {
                 handle,
-                uuid: Uuid::from_le(&e[2..]).ok_or(Error::Malformed)?,
+                uuid: Uuid::from_le(tail(e, 2)).ok_or(Error::Malformed)?,
             });
             last = handle;
         }
@@ -221,7 +222,7 @@ pub fn read_long(
     limit: usize,
 ) -> Result<Vec<u8>, Error> {
     let mut out = Vec::new();
-    let chunk = usize::from(mtu.max(att::DEFAULT_MTU)) - 1;
+    let chunk = usize::from(mtu.max(att::DEFAULT_MTU)).saturating_sub(1);
     for round in 0..MAX_ROUNDS {
         let req = if round == 0 {
             att::read(handle)
@@ -237,7 +238,7 @@ pub fn read_long(
                 att::OP_READ_BLOB_RSP
             },
         )?;
-        let data = &rsp[1..];
+        let data = tail(&rsp, 1);
         out.extend_from_slice(data);
         if data.len() < chunk || out.len() >= limit {
             break;

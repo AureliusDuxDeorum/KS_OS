@@ -57,7 +57,7 @@ impl HogpDevice {
         {
             // Descriptors live between this value and the next characteristic declaration.
             let end = chars
-                .get(i + 1)
+                .get(i.saturating_add(1))
                 .map_or(svc.end, |n| n.decl_handle.saturating_sub(1));
             let descs = gatt::discover_descriptors(link, c.value_handle.saturating_add(1), end)
                 .unwrap_or_default();
@@ -105,7 +105,7 @@ impl HogpDevice {
             .iter()
             .find(|r| r.value_handle == handle && r.kind == REPORT_TYPE_INPUT)?;
         // GATT report values carry no report-ID byte; the descriptor-based decoder expects one when IDs are in use.
-        let mut report = Vec::with_capacity(value.len() + 1);
+        let mut report = Vec::with_capacity(value.len().saturating_add(1));
         if self.descriptor.uses_report_ids {
             report.push(r.id);
         }

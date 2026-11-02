@@ -10,6 +10,24 @@
 //! No `unsafe` and no hardware access live here; the kernel's `net/` module supplies MMIO and DMA.
 #![no_std]
 #![forbid(unsafe_code)]
+// Device- and wire-supplied data must never be able to panic the stack (ADR-0030 S-10/S-11).
+#![deny(
+    clippy::indexing_slicing,
+    clippy::arithmetic_side_effects,
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic
+)]
+#![cfg_attr(
+    test,
+    allow(
+        clippy::indexing_slicing,
+        clippy::arithmetic_side_effects,
+        clippy::unwrap_used,
+        clippy::expect_used,
+        clippy::panic
+    )
+)]
 
 extern crate alloc;
 

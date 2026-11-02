@@ -6,6 +6,12 @@
 //! mainline Linux `igc`/`igb` drivers; the ring logic is generic over [`DmaMem`] so it is tested
 //! on the host against a simulated device that writes descriptors back like the hardware does.
 
+#![allow(
+    clippy::arithmetic_side_effects,
+    reason = "ring indices are driver-private and always below the ring size (<= 32768) and offsets \
+              stay inside the region; the release profile has overflow-checks, so a bug is fail-stop"
+)]
+
 use crate::dma::DmaMem;
 
 pub const VENDOR_INTEL: u16 = 0x8086;
@@ -243,8 +249,10 @@ impl RxQueue {
             status & RX_EOP != 0 && status & RX_ERR_MASK == 0 && len >= 14 && len <= out.len();
         let mut delivered = None;
         if good {
-            bufs.read_bytes(usize::from(i) * BUF_SIZE, &mut out[..len]);
-            delivered = Some(len);
+            if let Some(dst) = out.get_mut(..len) {
+                bufs.read_bytes(usize::from(i) * BUF_SIZE, dst);
+                delivered = Some(len);
+            }
         } else {
             self.dropped = self.dropped.wrapping_add(1);
         }

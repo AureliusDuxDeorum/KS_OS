@@ -52,7 +52,7 @@ impl Reassembler {
         }
         if self.buf.len() == self.expected {
             let cid = u16_at(&self.buf, 2)?;
-            let payload = self.buf[4..].to_vec();
+            let payload = ksparse::bytes::tail(&self.buf, 4).to_vec();
             self.reset();
             return Some(Frame { cid, payload });
         }
@@ -67,7 +67,7 @@ impl Reassembler {
 
 /// Splits a frame into ACL packets no larger than `max_acl` bytes of data.
 pub fn fragment(handle: u16, cid: u16, payload: &[u8], max_acl: usize) -> Vec<Vec<u8>> {
-    let mut sdu = Vec::with_capacity(4 + payload.len());
+    let mut sdu = Vec::with_capacity(payload.len().saturating_add(4));
     sdu.extend_from_slice(&(payload.len() as u16).to_le_bytes());
     sdu.extend_from_slice(&cid.to_le_bytes());
     sdu.extend_from_slice(payload);
@@ -125,6 +125,10 @@ pub fn valid_connection_parameters(p: &ConnectionParameterUpdate) -> bool {
         && (p.interval_min..=3200).contains(&p.interval_max)
         && p.latency <= 499
         && (10..=3200).contains(&p.timeout)
-        && u32::from(p.timeout) * 4
-            > (1 + u32::from(p.latency)) * u32::from(p.interval_max) * 2 / 10
+        && u32::from(p.timeout).saturating_mul(4)
+            > u32::from(p.latency)
+                .saturating_add(1)
+                .saturating_mul(u32::from(p.interval_max))
+                .saturating_mul(2)
+                / 10
 }

@@ -5,7 +5,7 @@
 //! truncated tables yield an error or are cut short, never a panic or an
 //! out-of-bounds read. Host-tested and fuzzed (gate item R9).
 
-use crate::bytes::{u16_at, u32_at, u64_at};
+use crate::bytes::{u16_at, u32_at, u64_at, u8_at};
 use alloc::vec::Vec;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -80,7 +80,7 @@ pub fn parse(table: &[u8]) -> Result<Madt, MadtError> {
     if table.len() < 44 {
         return Err(MadtError::TooShort);
     }
-    if &table[0..4] != b"APIC" {
+    if table.get(0..4) != Some(&b"APIC"[..]) {
         return Err(MadtError::BadSignature);
     }
     let mut madt = Madt {
@@ -88,18 +88,20 @@ pub fn parse(table: &[u8]) -> Result<Madt, MadtError> {
         ..Madt::default()
     };
     let mut off = 44;
-    while off + 2 <= table.len() {
-        let (kind, len) = (table[off], usize::from(table[off + 1]));
-        if len < 2 || off + len > table.len() {
-            break; // truncated or malformed entry: stop, keep what we have
-        }
-        let e = &table[off..off + len];
+    while let (Some(kind), Some(len)) = (u8_at(table, off), u8_at(table, off.saturating_add(1))) {
+        let len = usize::from(len);
+        // Truncated or malformed entry: stop, keep what we have.
+        let Some(e) = table.get(off..off.saturating_add(len)).filter(|_| len >= 2) else {
+            break;
+        };
         match kind {
             // Processor Local APIC: flags bit 0 = enabled, bit 1 = online-capable.
-            0 if len >= 8 && u32_at(e, 4).unwrap_or(0) & 3 != 0 => madt.processors += 1,
+            0 if len >= 8 && u32_at(e, 4).unwrap_or(0) & 3 != 0 => {
+                madt.processors = madt.processors.saturating_add(1)
+            }
             // I/O APIC.
             1 if len >= 12 => madt.ioapics.push(IoApicInfo {
-                id: e[2],
+                id: u8_at(e, 2).unwrap_or(0),
                 address: u32_at(e, 4).unwrap_or(0),
                 gsi_base: u32_at(e, 8).unwrap_or(0),
             }),
@@ -111,7 +113,7 @@ pub fn parse(table: &[u8]) -> Result<Madt, MadtError> {
                     Trigger::Edge,
                 );
                 madt.overrides.push(SourceOverride {
-                    source: e[3],
+                    source: u8_at(e, 3).unwrap_or(0),
                     gsi: u32_at(e, 4).unwrap_or(0),
                     polarity,
                     trigger,
@@ -124,14 +126,13 @@ pub fn parse(table: &[u8]) -> Result<Madt, MadtError> {
                     Polarity::ActiveHigh,
                     Trigger::Edge,
                 );
-                let uid = if e[2] == 0xFF {
-                    u32::MAX
-                } else {
-                    u32::from(e[2])
+                let uid = match u8_at(e, 2).unwrap_or(0) {
+                    0xFF => u32::MAX,
+                    n => u32::from(n),
                 };
                 madt.nmis.push(LapicNmi {
                     processor_uid: uid,
-                    lint: e[5],
+                    lint: u8_at(e, 5).unwrap_or(0),
                     polarity,
                     trigger,
                 });
@@ -139,7 +140,9 @@ pub fn parse(table: &[u8]) -> Result<Madt, MadtError> {
             // Local APIC address override.
             5 if len >= 12 => madt.lapic_address = u64_at(e, 4).unwrap_or(0),
             // Processor Local x2APIC.
-            9 if len >= 16 && u32_at(e, 8).unwrap_or(0) & 3 != 0 => madt.processors += 1,
+            9 if len >= 16 && u32_at(e, 8).unwrap_or(0) & 3 != 0 => {
+                madt.processors = madt.processors.saturating_add(1)
+            }
             // Local x2APIC NMI.
             0xA if len >= 12 => {
                 let (polarity, trigger) = decode_flags(
@@ -149,14 +152,14 @@ pub fn parse(table: &[u8]) -> Result<Madt, MadtError> {
                 );
                 madt.nmis.push(LapicNmi {
                     processor_uid: u32_at(e, 6).unwrap_or(0),
-                    lint: e[10],
+                    lint: u8_at(e, 10).unwrap_or(0),
                     polarity,
                     trigger,
                 });
             }
             _ => {}
         }
-        off += len;
+        off = off.saturating_add(len);
     }
     Ok(madt)
 }

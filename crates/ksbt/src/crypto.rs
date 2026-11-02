@@ -31,7 +31,7 @@ pub fn aes128(key: &[u8; 16], block: &[u8; 16]) -> [u8; 16] {
 /// AES-CMAC (RFC 4493) over `msg` with `key`; big-endian message and key as in the RFC.
 pub fn aes_cmac(key: &[u8; 16], msg: &[u8]) -> [u8; 16] {
     // `new_from_slice` cannot fail for a 16-byte key.
-    let mut mac = <Cmac<Aes128> as Mac>::new_from_slice(key).expect("16-byte key");
+    let mut mac = <Cmac<Aes128> as Mac>::new(&(*key).into());
     mac.update(msg);
     mac.finalize().into_bytes().into()
 }
@@ -145,8 +145,12 @@ impl EphemeralKey {
     pub fn public(&self) -> ([u8; 32], [u8; 32]) {
         let point = self.secret.public_key().to_sec1_point(false);
         let (mut x, mut y) = ([0u8; 32], [0u8; 32]);
-        x.copy_from_slice(point.x().expect("uncompressed point"));
-        y.copy_from_slice(point.y().expect("uncompressed point"));
+        // An uncompressed SEC1 point of a valid key always carries both coordinates.
+        for (dst, src) in [(&mut x, point.x()), (&mut y, point.y())] {
+            for (d, s) in dst.iter_mut().zip(src.into_iter().flatten()) {
+                *d = *s;
+            }
+        }
         (rev(x), rev(y))
     }
 

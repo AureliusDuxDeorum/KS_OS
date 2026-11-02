@@ -8,7 +8,7 @@
 
 use crate::{crypto, Address};
 use alloc::vec::Vec;
-use ksparse::bytes::u8_at;
+use ksparse::bytes::{array_at, u32_at, u8_at};
 use zeroize::Zeroize;
 
 const MAGIC: &[u8; 4] = b"KSBB";
@@ -100,7 +100,12 @@ impl BondStore {
     }
 
     pub fn to_bytes(&self) -> Vec<u8> {
-        let mut out = Vec::with_capacity(8 + self.bonds.len() * RECORD_LEN + 4);
+        let mut out = Vec::with_capacity(
+            self.bonds
+                .len()
+                .saturating_mul(RECORD_LEN)
+                .saturating_add(12),
+        );
         out.extend_from_slice(MAGIC);
         out.push(VERSION);
         out.push(self.bonds.len() as u8);
@@ -124,42 +129,31 @@ impl BondStore {
     }
 
     fn try_from_bytes(data: &[u8]) -> Option<Self> {
-        if data.len() < 10 || &data[..4] != MAGIC || data[4] != VERSION {
+        if data.len() < 10 || data.get(..4)? != MAGIC || u8_at(data, 4)? != VERSION {
             return None;
         }
-        let n = usize::from(data[5]);
-        let body_len = 6 + n * RECORD_LEN;
-        if n > MAX_BONDS || data.len() != body_len + 4 {
+        let n = usize::from(u8_at(data, 5)?);
+        let body_len = n.checked_mul(RECORD_LEN)?.checked_add(6)?;
+        if n > MAX_BONDS || data.len() != body_len.checked_add(4)? {
             return None;
         }
-        let stored = u32::from_le_bytes([
-            data[body_len],
-            data[body_len + 1],
-            data[body_len + 2],
-            data[body_len + 3],
-        ]);
-        if crc32(&data[..body_len]) != stored {
+        let stored = u32_at(data, body_len)?;
+        if crc32(data.get(..body_len)?) != stored {
             return None;
         }
         let mut bonds = Vec::new();
-        for r in data[6..body_len].chunks_exact(RECORD_LEN) {
-            let mut address = Address::new(u8_at(r, 0)?, [0; 6]);
-            address.bytes.copy_from_slice(&r[1..7]);
-            let mut ltk = [0u8; 16];
-            ltk.copy_from_slice(&r[7..23]);
-            let irk = if r[24] != 0 {
-                let mut k = [0u8; 16];
-                k.copy_from_slice(&r[25..41]);
-                Some(k)
+        for r in data.get(6..body_len)?.chunks_exact(RECORD_LEN) {
+            let irk = if u8_at(r, 24)? != 0 {
+                Some(array_at::<16>(r, 25)?)
             } else {
                 None
             };
             bonds.push(Bond {
-                address,
-                ltk,
-                authenticated: r[23] != 0,
+                address: Address::new(u8_at(r, 0)?, array_at::<6>(r, 1)?),
+                ltk: array_at::<16>(r, 7)?,
+                authenticated: u8_at(r, 23)? != 0,
                 irk,
-                kind: r[41],
+                kind: u8_at(r, 41)?,
             });
         }
         Some(Self { bonds })

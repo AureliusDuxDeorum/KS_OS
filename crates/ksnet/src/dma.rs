@@ -5,6 +5,10 @@
 //! reads and writes (the device modifies this memory behind the CPU's back) and so the ring logic
 //! stays free of `unsafe`. The kernel implements it for its `Dma` buffers; tests use a `Vec` model.
 
+#[allow(
+    clippy::arithmetic_side_effects,
+    reason = "offsets are small and bounded by the caller's region; overflow-checks make a bug fail-stop"
+)]
 pub trait DmaMem {
     fn len(&self) -> usize;
     fn is_empty(&self) -> bool {

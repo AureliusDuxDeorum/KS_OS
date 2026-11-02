@@ -9,7 +9,7 @@
 use crate::hci::Command;
 use alloc::string::String;
 use alloc::vec::Vec;
-use ksparse::bytes::{u16_at, u32_at, u8_at};
+use ksparse::bytes::{array_at, slice_at, u16_at, u32_at, u8_at};
 
 /// HCI opcode that carries WMT (wireless management task) requests.
 pub const WMT_OPCODE: u16 = 0xFC6F;
@@ -74,7 +74,7 @@ pub fn parse_patch(file: &[u8]) -> Result<PatchFile, PatchError> {
         return Err(PatchError::TooShort);
     }
     // Header: 16-byte build time, 4-byte platform, hw/sw version, magic.
-    let build_time = String::from_utf8_lossy(&file[..16])
+    let build_time = String::from_utf8_lossy(file.get(..16).ok_or(PatchError::TooShort)?)
         .trim_end_matches('\0')
         .trim()
         .into();
@@ -89,10 +89,9 @@ pub fn parse_patch(file: &[u8]) -> Result<PatchFile, PatchError> {
     }
     let mut sections = Vec::new();
     for i in 0..section_num {
-        let map = HEADER_SIZE + GLOBAL_DESC_SIZE + SECTION_MAP_SIZE * i;
-        let entry = file
-            .get(map..map + SECTION_MAP_SIZE)
-            .ok_or(PatchError::TooShort)?;
+        let map =
+            (HEADER_SIZE + GLOBAL_DESC_SIZE).saturating_add(SECTION_MAP_SIZE.saturating_mul(i));
+        let entry = slice_at(file, map, SECTION_MAP_SIZE).ok_or(PatchError::TooShort)?;
         let offset = u32_at(entry, 4).ok_or(PatchError::TooShort)? as usize;
         // bin_info_spec starts after the 12-byte common part: dlAddr, dlsize, ...
         let dl_size = u32_at(entry, SECTION_MAP_COMMON + 4).ok_or(PatchError::TooShort)? as usize;
@@ -106,8 +105,11 @@ pub fn parse_patch(file: &[u8]) -> Result<PatchFile, PatchError> {
             return Err(PatchError::SectionOutOfRange);
         }
         let mut announce = [0u8; 1 + SECTION_MAP_SEND];
-        announce[1..]
-            .copy_from_slice(&entry[SECTION_MAP_COMMON..SECTION_MAP_COMMON + SECTION_MAP_SEND]);
+        let send =
+            slice_at(entry, SECTION_MAP_COMMON, SECTION_MAP_SEND).ok_or(PatchError::TooShort)?;
+        for (d, s) in announce.iter_mut().skip(1).zip(send) {
+            *d = *s;
+        }
         sections.push(Section {
             announce,
             data_offset: offset,
@@ -139,24 +141,25 @@ pub fn chunks(section_data: &[u8]) -> Vec<(u8, &[u8])> {
         let n = rest.len().min(PATCH_CHUNK);
         let flag = if first {
             1
-        } else if rest.len() - n == 0 {
+        } else if rest.len() == n {
             3
         } else {
             2
         };
         first = false;
-        out.push((flag, &rest[..n]));
-        rest = &rest[n..];
+        let (chunk, remaining) = rest.split_at(n);
+        out.push((flag, chunk));
+        rest = remaining;
     }
     out
 }
 
 /// Builds a WMT request as an HCI vendor command.
 pub fn wmt_command(op: u8, flag: u8, data: &[u8]) -> Command {
-    let mut p = Vec::with_capacity(5 + data.len());
+    let mut p = Vec::with_capacity(data.len().saturating_add(5));
     p.push(0x01); // direction: host to chip
     p.push(op);
-    p.extend_from_slice(&((data.len() + 1) as u16).to_le_bytes()); // length counts the flag byte
+    p.extend_from_slice(&(data.len().saturating_add(1) as u16).to_le_bytes()); // length counts the flag byte
     p.push(flag);
     p.extend_from_slice(data);
     Command::new(WMT_OPCODE, &p)
@@ -176,10 +179,10 @@ pub fn parse_wmt_event(event: &[u8]) -> Option<WmtEvent> {
         return None;
     }
     let len = usize::from(u8_at(event, 1)?);
-    let p = event.get(2..2 + len)?;
+    let p = slice_at(event, 2, len)?;
     // direction, op, dlen (u16), flag, [status (u16, big-endian)]
     let (op, flag) = (u8_at(p, 1)?, u8_at(p, 4)?);
-    let status = (p.len() >= 7).then(|| u16::from_be_bytes([p[5], p[6]]));
+    let status = array_at::<2>(p, 5).map(u16::from_be_bytes);
     Some(WmtEvent { op, flag, status })
 }
 
@@ -205,6 +208,6 @@ pub fn firmware_name(chip_id: u32, fw_version: u32, flavor_bit: bool) -> String 
     let a = if id == 0x7961 && flavor_bit { "a" } else { "" };
     alloc::format!(
         "BT_RAM_CODE_MT{id:04X}_1{a}_{:x}_hdr.bin",
-        (fw_version & 0xFF) + 1
+        (fw_version & 0xFF).saturating_add(1)
     )
 }

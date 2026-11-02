@@ -3,6 +3,12 @@
 //!
 //! Used for CI (QEMU `virtio-net-pci`) and virtual machines. Spec: OASIS Virtual I/O Device 1.2.
 
+#![allow(
+    clippy::arithmetic_side_effects,
+    reason = "ring indices are driver-private and always below the ring size (<= 32768) and offsets \
+              stay inside the region; the release profile has overflow-checks, so a bug is fail-stop"
+)]
+
 use crate::dma::DmaMem;
 
 pub const VENDOR: u16 = 0x1AF4;
@@ -130,7 +136,7 @@ impl Virtqueue {
         let mut idx = head;
         for (k, &(addr, len, write)) in bufs.iter().enumerate() {
             let o = l.desc + usize::from(idx) * 16;
-            let next = self.next[usize::from(idx)];
+            let next = self.next.get(usize::from(idx)).copied().unwrap_or(0);
             let last = k + 1 == bufs.len();
             mem.write64(o, addr);
             mem.write32(o + 8, len);
@@ -148,7 +154,9 @@ impl Virtqueue {
             idx = next;
         }
         self.num_free -= count;
-        self.chain_len[usize::from(head)] = count;
+        if let Some(c) = self.chain_len.get_mut(usize::from(head)) {
+            *c = count;
+        }
         // avail ring: flags(2) idx(2) ring[size] ; publish the head then bump idx.
         let slot = usize::from(self.avail_idx % l.size);
         mem.write16(l.avail + 4 + 2 * slot, head);
@@ -168,17 +176,20 @@ impl Virtqueue {
         let id = mem.read32(e) as u16;
         let len = mem.read32(e + 4);
         self.last_used = self.last_used.wrapping_add(1);
-        if id >= l.size || self.chain_len[usize::from(id)] == 0 {
-            return None; // malformed completion from the device: ignore it
-        }
+        // A malformed completion from the device (bad id, or a chain we did not submit) is ignored.
+        let count = match self.chain_len.get(usize::from(id)).copied() {
+            Some(c) if c != 0 && id < l.size => c,
+            _ => return None,
+        };
         // Return the chain to the free list.
-        let count = self.chain_len[usize::from(id)];
-        self.chain_len[usize::from(id)] = 0;
+        if let Some(c) = self.chain_len.get_mut(usize::from(id)) {
+            *c = 0;
+        }
         let mut tail = id;
         for _ in 1..count {
-            tail = self.next[usize::from(tail)];
+            tail = self.next.get(usize::from(tail)).copied()?;
         }
-        self.next[usize::from(tail)] = self.free_head;
+        *self.next.get_mut(usize::from(tail))? = self.free_head;
         mem.write16(l.desc + usize::from(tail) * 16 + 14, self.free_head);
         self.free_head = id;
         self.num_free += count;

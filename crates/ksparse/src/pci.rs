@@ -15,8 +15,7 @@ impl Config for [u8] {
     /// A raw byte image of configuration space (used by tests and fuzzers); out-of-range reads give all-ones.
     fn read32(&self, offset: u16) -> u32 {
         let o = usize::from(offset & !3);
-        self.get(o..o + 4)
-            .map_or(u32::MAX, |s| u32::from_le_bytes([s[0], s[1], s[2], s[3]]))
+        crate::bytes::u32_at(self, o).unwrap_or(u32::MAX)
     }
 }
 
@@ -131,10 +130,11 @@ pub fn capabilities(c: &(impl Config + ?Sized), h: &Header) -> Vec<Capability> {
             break;
         }
         let (word, bit) = (usize::from(ptr / 4 / 64), (ptr / 4) % 64);
-        if seen[word] >> bit & 1 == 1 {
+        let Some(w) = seen.get_mut(word) else { break };
+        if (*w >> bit) & 1 == 1 {
             break;
         }
-        seen[word] |= 1 << bit;
+        *w |= 1 << bit;
         let hdr = c.read32(ptr);
         out.push(Capability {
             id: hdr as u8,
@@ -212,7 +212,10 @@ pub fn decode_bar(orig: &[u32], probed: &[u32], i: usize) -> Option<(Bar, usize)
             ))
         }
         2 => {
-            let (&o_hi, &p_hi) = (orig.get(i + 1)?, probed.get(i + 1)?);
+            let (&o_hi, &p_hi) = (
+                orig.get(i.saturating_add(1))?,
+                probed.get(i.saturating_add(1))?,
+            );
             let mask = (u64::from(p_hi) << 32) | u64::from(p & !0xF);
             let size = (!mask).wrapping_add(1);
             if size == 0 || !size.is_power_of_two() {
@@ -275,11 +278,11 @@ pub fn msix(c: &(impl Config + ?Sized), cap: Capability) -> Option<Msix> {
         return None;
     }
     let o = u16::from(cap.offset);
-    let ctl = read16(c, o + 2);
-    let (table, pba) = (c.read32(o + 4), c.read32(o + 8));
+    let ctl = read16(c, o.saturating_add(2));
+    let (table, pba) = (c.read32(o.saturating_add(4)), c.read32(o.saturating_add(8)));
     Some(Msix {
         offset: cap.offset,
-        table_size: (ctl & 0x7FF) + 1,
+        table_size: (ctl & 0x7FF).saturating_add(1),
         table_bar: (table & 7) as u8,
         table_offset: table & !7,
         pba_bar: (pba & 7) as u8,

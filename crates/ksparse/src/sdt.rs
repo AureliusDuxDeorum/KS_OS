@@ -56,13 +56,13 @@ impl Rsdp {
         if b.len() < 20 {
             return Err(SdtError::TooShort);
         }
-        if &b[0..8] != b"RSD PTR " {
+        if b.get(0..8) != Some(&b"RSD PTR "[..]) {
             return Err(SdtError::BadSignature);
         }
-        if !checksum_ok(&b[0..20]) {
+        if !b.get(0..20).is_some_and(checksum_ok) {
             return Err(SdtError::BadChecksum);
         }
-        let revision = b[15];
+        let revision = u8_at(b, 15).ok_or(SdtError::TooShort)?;
         let rsdt = u32_at(b, 16).ok_or(SdtError::TooShort)?;
         let mut xsdt = 0;
         if revision >= 2 {
@@ -70,7 +70,7 @@ impl Rsdp {
             if !(36..=b.len()).contains(&len) {
                 return Err(SdtError::BadLength);
             }
-            if !checksum_ok(&b[..len]) {
+            if !b.get(..len).is_some_and(checksum_ok) {
                 return Err(SdtError::BadChecksum);
             }
             xsdt = u64_at(b, 24).ok_or(SdtError::TooShort)?;
@@ -126,13 +126,13 @@ impl Fadt {
         if t.len() < 116 {
             return Err(SdtError::TooShort);
         }
-        if &t[0..4] != b"FACP" {
+        if t.get(0..4) != Some(&b"FACP"[..]) {
             return Err(SdtError::BadSignature);
         }
         // Generic Address Structure in system I/O space: address at +4.
         let gas_io = |off: usize| -> Option<u16> {
             (u8_at(t, off)? == 1)
-                .then(|| u64_at(t, off + 4).unwrap_or(0) as u16)
+                .then(|| u64_at(t, off.saturating_add(4)).unwrap_or(0) as u16)
                 .filter(|&p| p != 0)
         };
         let x_dsdt = u64_at(t, 140).unwrap_or(0);
@@ -156,21 +156,21 @@ impl Fadt {
 fn aml_int(b: &[u8], i: &mut usize) -> Option<u16> {
     match *b.get(*i)? {
         0x00 => {
-            *i += 1;
+            *i = i.saturating_add(1);
             Some(0)
         }
         0x01 => {
-            *i += 1;
+            *i = i.saturating_add(1);
             Some(1)
         }
         0x0A => {
-            let v = *b.get(*i + 1)?;
-            *i += 2;
+            let v = *b.get(i.saturating_add(1))?;
+            *i = i.saturating_add(2);
             Some(u16::from(v))
         }
         0x0B => {
-            let v = u16_at(b, *i + 1)?;
-            *i += 3;
+            let v = u16_at(b, i.saturating_add(1))?;
+            *i = i.saturating_add(3);
             Some(v)
         }
         _ => None,
@@ -185,23 +185,24 @@ pub fn find_s5(dsdt: &[u8]) -> Option<(u8, u8)> {
     let body = dsdt.get(HEADER_LEN..)?;
     let mut off = 0;
     while let Some(pos) = body.get(off..)?.windows(4).position(|w| w == b"_S5_") {
-        let at = off + pos;
-        off = at + 1;
+        let at = off.saturating_add(pos);
+        off = at.saturating_add(1);
         // Preceded by NameOp (0x08), optionally with a root prefix '\' (0x5C).
-        let prev_ok = (at >= 1 && body[at - 1] == 0x08)
-            || (at >= 2 && body[at - 1] == 0x5C && body[at - 2] == 0x08);
+        let before = |n: usize| at.checked_sub(n).and_then(|p| body.get(p)).copied();
+        let prev_ok =
+            before(1) == Some(0x08) || (before(1) == Some(0x5C) && before(2) == Some(0x08));
         if !prev_ok {
             continue;
         }
-        let mut i = at + 4;
+        let mut i = at.saturating_add(4);
         if body.get(i) != Some(&0x12) {
             continue; // PackageOp
         }
-        i += 1;
+        i = i.saturating_add(1);
         // PkgLength: top two bits of the lead byte = number of extra length bytes.
         let Some(&lead) = body.get(i) else { continue };
-        i += 1 + usize::from(lead >> 6);
-        i += 1; // NumElements
+        i = i.saturating_add(1).saturating_add(usize::from(lead >> 6));
+        i = i.saturating_add(1); // NumElements
         let (Some(a), Some(b)) = (aml_int(body, &mut i), aml_int(body, &mut i)) else {
             continue;
         };

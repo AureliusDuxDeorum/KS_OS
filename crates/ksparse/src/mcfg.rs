@@ -24,11 +24,11 @@ pub fn parse(table: &[u8]) -> Result<Vec<EcamRegion>, McfgError> {
     if table.len() < 44 {
         return Err(McfgError::TooShort);
     }
-    if &table[0..4] != b"MCFG" {
+    if table.get(0..4) != Some(&b"MCFG"[..]) {
         return Err(McfgError::BadSignature);
     }
     let mut out = Vec::new();
-    for e in table[44..].chunks_exact(16) {
+    for e in table.get(44..).unwrap_or(&[]).chunks_exact(16) {
         let (Some(base), Some(segment), Some(start_bus), Some(end_bus)) =
             (u64_at(e, 0), u16_at(e, 8), u8_at(e, 10), u8_at(e, 11))
         else {
@@ -53,11 +53,9 @@ impl EcamRegion {
         if bus < self.start_bus || bus > self.end_bus || device > 31 || function > 7 {
             return None;
         }
-        Some(
-            self.base
-                + (u64::from(bus - self.start_bus) << 20)
-                + (u64::from(device) << 15)
-                + (u64::from(function) << 12),
-        )
+        let offset = (u64::from(bus.checked_sub(self.start_bus)?) << 20)
+            | (u64::from(device) << 15)
+            | (u64::from(function) << 12);
+        self.base.checked_add(offset)
     }
 }

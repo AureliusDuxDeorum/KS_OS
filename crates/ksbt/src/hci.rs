@@ -5,7 +5,7 @@
 
 use crate::Address;
 use alloc::vec::Vec;
-use ksparse::bytes::{u16_at, u32_at, u8_at};
+use ksparse::bytes::{array_at, slice_at, tail, u16_at, u32_at, u8_at};
 
 pub const fn opcode(ogf: u16, ocf: u16) -> u16 {
     (ogf << 10) | ocf
@@ -70,7 +70,7 @@ impl Command {
 
     /// The command packet as sent over USB (no H4 indicator byte).
     pub fn to_bytes(&self) -> Vec<u8> {
-        let mut v = Vec::with_capacity(3 + self.params.len());
+        let mut v = Vec::with_capacity(self.params.len().saturating_add(3));
         v.extend_from_slice(&self.opcode.to_le_bytes());
         v.push(self.params.len() as u8);
         v.extend_from_slice(&self.params);
@@ -238,9 +238,10 @@ pub enum Event {
 
 fn address_at(b: &[u8], kind_off: usize) -> Option<Address> {
     let kind = u8_at(b, kind_off)?;
-    let mut bytes = [0u8; 6];
-    bytes.copy_from_slice(b.get(kind_off + 1..kind_off + 7)?);
-    Some(Address::new(kind, bytes))
+    Some(Address::new(
+        kind,
+        array_at::<6>(b, kind_off.saturating_add(1))?,
+    ))
 }
 
 /// Parses an event packet (`code`, `length`, parameters).
@@ -276,7 +277,11 @@ pub fn parse_event(pkt: &[u8]) -> Option<Event> {
             let n = usize::from(u8_at(p, 0)?);
             let mut v = Vec::new();
             for i in 0..n {
-                v.push((u16_at(p, 1 + 4 * i)? & 0x0FFF, u16_at(p, 3 + 4 * i)?));
+                let base = i.saturating_mul(4);
+                v.push((
+                    u16_at(p, base.saturating_add(1))? & 0x0FFF,
+                    u16_at(p, base.saturating_add(3))?,
+                ));
             }
             Event::NumCompletedPackets(v)
         }
@@ -309,17 +314,17 @@ pub fn parse_event(pkt: &[u8]) -> Option<Event> {
                     let mut off = 1;
                     for _ in 0..n.min(16) {
                         let event_type = u8_at(p, off)?;
-                        let address = address_at(p, off + 1)?;
-                        let dlen = usize::from(u8_at(p, off + 8)?);
-                        let data = p.get(off + 9..off + 9 + dlen)?.to_vec();
-                        let rssi = u8_at(p, off + 9 + dlen)? as i8;
+                        let address = address_at(p, off.saturating_add(1))?;
+                        let dlen = usize::from(u8_at(p, off.saturating_add(8))?);
+                        let data = slice_at(p, off.saturating_add(9), dlen)?.to_vec();
+                        let rssi = u8_at(p, off.saturating_add(9).saturating_add(dlen))? as i8;
                         reports.push(AdvReport {
                             event_type,
                             address,
                             data,
                             rssi,
                         });
-                        off += 10 + dlen;
+                        off = off.saturating_add(10).saturating_add(dlen);
                     }
                     Event::LeAdvertisingReports(reports)
                 }
@@ -395,22 +400,22 @@ pub fn parse_adv_data(data: &[u8]) -> AdvInfo {
         if len == 0 {
             break;
         }
-        let Some(s) = data.get(off + 1..off + 1 + len) else {
+        let Some(s) = slice_at(data, off.saturating_add(1), len) else {
             break;
         };
-        let (kind, body) = (s[0], &s[1..]);
+        let (Some(&kind), body) = (s.first(), tail(s, 1)) else {
+            break;
+        };
         match kind {
             ad::FLAGS => info.flags = body.first().copied(),
             ad::SHORT_NAME | ad::COMPLETE_NAME => info.name = Some(body.to_vec()),
             ad::APPEARANCE => info.appearance = u16_at(body, 0),
-            ad::INCOMPLETE_UUID16 | ad::COMPLETE_UUID16 => info.services16.extend(
-                body.chunks_exact(2)
-                    .take(16)
-                    .map(|c| u16::from_le_bytes([c[0], c[1]])),
-            ),
+            ad::INCOMPLETE_UUID16 | ad::COMPLETE_UUID16 => info
+                .services16
+                .extend(body.chunks_exact(2).take(16).filter_map(|c| u16_at(c, 0))),
             _ => {}
         }
-        off += 1 + len;
+        off = off.saturating_add(1).saturating_add(len);
     }
     info
 }
@@ -427,7 +432,7 @@ pub struct AclHeader {
 pub fn parse_acl(pkt: &[u8]) -> Option<(AclHeader, &[u8])> {
     let hw = u16_at(pkt, 0)?;
     let len = u16_at(pkt, 2)?;
-    let data = pkt.get(4..4 + usize::from(len))?;
+    let data = slice_at(pkt, 4, usize::from(len))?;
     Some((
         AclHeader {
             handle: hw & 0x0FFF,
@@ -439,7 +444,7 @@ pub fn parse_acl(pkt: &[u8]) -> Option<(AclHeader, &[u8])> {
 }
 
 pub fn build_acl(handle: u16, pb: u8, data: &[u8]) -> Vec<u8> {
-    let mut v = Vec::with_capacity(4 + data.len());
+    let mut v = Vec::with_capacity(data.len().saturating_add(4));
     v.extend_from_slice(&((handle & 0x0FFF) | (u16::from(pb & 3) << 12)).to_le_bytes());
     v.extend_from_slice(&(data.len() as u16).to_le_bytes());
     v.extend_from_slice(data);

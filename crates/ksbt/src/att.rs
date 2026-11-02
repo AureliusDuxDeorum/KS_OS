@@ -2,6 +2,7 @@
 //! ATT (Core Spec Vol 3, Part F): PDU opcodes, error codes, UUIDs and PDU builders.
 
 use alloc::vec::Vec;
+use ksparse::bytes::{u16_at, u8_at};
 
 pub const OP_ERROR_RSP: u8 = 0x01;
 pub const OP_MTU_REQ: u8 = 0x02;
@@ -41,10 +42,9 @@ impl Uuid {
     /// Decodes a 2- or 16-byte little-endian UUID.
     pub fn from_le(b: &[u8]) -> Option<Self> {
         match b.len() {
-            2 => Some(Self::Short(u16::from_le_bytes([b[0], b[1]]))),
+            2 => Some(Self::Short(u16::from_le_bytes(b.try_into().ok()?))),
             16 => {
-                let mut a = [0u8; 16];
-                a.copy_from_slice(b);
+                let a: [u8; 16] = b.try_into().ok()?;
                 Some(Self::Long(a))
             }
             _ => None,
@@ -124,10 +124,10 @@ pub fn write_request(handle: u16, value: &[u8]) -> Vec<u8> {
 
 /// Decodes an ATT Error Response into `(request opcode, handle, error code)`.
 pub fn parse_error(p: &[u8]) -> Option<(u8, u16, u8)> {
-    if p.len() < 5 || p[0] != OP_ERROR_RSP {
+    if u8_at(p, 0)? != OP_ERROR_RSP {
         return None;
     }
-    Some((p[1], u16::from_le_bytes([p[2], p[3]]), p[4]))
+    Some((u8_at(p, 1)?, u16_at(p, 2)?, u8_at(p, 4)?))
 }
 
 /// True for PDUs the server sends unprompted (not responses to our requests).

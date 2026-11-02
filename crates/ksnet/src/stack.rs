@@ -100,7 +100,7 @@ impl<N: Nic> Stack<N> {
             lease: None,
             dns_query: None,
             ping_ident: (seed as u16) | 1,
-            next_port: 49152 + (seed >> 16) as u16 % 8192,
+            next_port: 49152u16.saturating_add(((seed >> 16) as u16) % 8192),
             last_link: false,
         }
     }
@@ -302,7 +302,7 @@ impl<N: Nic> Stack<N> {
         self.next_port = if self.next_port >= 65000 {
             49152
         } else {
-            self.next_port + 1
+            self.next_port.saturating_add(1)
         };
         s.connect(
             self.iface.context(),
@@ -311,7 +311,7 @@ impl<N: Nic> Stack<N> {
         )
         .map_err(|_| Error::Invalid)?;
         s.set_nagle_enabled(false);
-        self.tcp[slot] = Some(self.sockets.add(s));
+        *self.tcp.get_mut(slot).ok_or(Error::NoSlot)? = Some(self.sockets.add(s));
         Ok(TcpId(slot))
     }
 
@@ -328,7 +328,7 @@ impl<N: Nic> Stack<N> {
             tcp::SocketBuffer::new(vec![0; TCP_BUF]),
         );
         s.listen(port).map_err(|_| Error::Invalid)?;
-        self.tcp[slot] = Some(self.sockets.add(s));
+        *self.tcp.get_mut(slot).ok_or(Error::NoSlot)? = Some(self.sockets.add(s));
         Ok(TcpId(slot))
     }
 

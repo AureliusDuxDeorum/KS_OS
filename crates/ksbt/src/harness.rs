@@ -19,13 +19,14 @@ struct Replay<'a> {
 
 impl Replay<'_> {
     fn next(&mut self) -> Option<Vec<u8>> {
-        self.served += 1;
+        self.served = self.served.saturating_add(1);
         if self.served > 4096 {
             return None; // a client that never terminates would be a bug; stop feeding it
         }
         let len = usize::from(*self.data.get(self.pos)?);
-        let chunk = self.data.get(self.pos + 1..self.pos + 1 + len)?;
-        self.pos += 1 + len;
+        let start = self.pos.saturating_add(1);
+        let chunk = self.data.get(start..start.saturating_add(len))?;
+        self.pos = start.saturating_add(len);
         Some(chunk.to_vec())
     }
 }
@@ -73,7 +74,7 @@ pub fn exercise(bytes: &[u8]) {
     // Pure parsers.
     if let Some(ev) = hci::parse_event(bytes) {
         let _ = (
-            hci::parse_local_version(&bytes[bytes.len().min(2)..]),
+            hci::parse_local_version(ksparse::bytes::tail(bytes, 2)),
             format_args!("{ev:?}"),
         );
     }
@@ -83,18 +84,22 @@ pub fn exercise(bytes: &[u8]) {
     let _ = (adv.is_hid(), adv.discoverable(), adv.name_lossy());
     let _ = l2cap::parse_signaling(bytes);
     let mut r = l2cap::Reassembler::default();
-    let mut off = 0;
-    while off + 4 <= bytes.len() {
-        let len = usize::from(bytes[off + 2]) | (usize::from(bytes[off + 3]) << 8);
-        let end = (off + 4 + len).min(bytes.len());
-        if let Some((h, d)) = hci::parse_acl(&bytes[off..end]) {
+    let mut off = 0usize;
+    while let Some(len) = ksparse::bytes::u16_at(bytes, off.saturating_add(2)) {
+        let end = off
+            .saturating_add(4)
+            .saturating_add(usize::from(len))
+            .min(bytes.len());
+        if let Some((h, d)) = bytes.get(off..end).and_then(hci::parse_acl) {
             let _ = r.push(&h, d);
         }
-        off = end.max(off + 1);
+        off = end.max(off.saturating_add(1));
     }
     if let Ok(p) = mtk::parse_patch(bytes) {
         for s in &p.sections {
-            let _ = mtk::chunks(&bytes[s.data_offset..s.data_offset + s.data_len]);
+            let _ = mtk::chunks(
+                ksparse::bytes::slice_at(bytes, s.data_offset, s.data_len).unwrap_or(&[]),
+            );
         }
     }
     let _ = mtk::parse_wmt_event(bytes);

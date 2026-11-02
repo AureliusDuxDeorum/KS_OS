@@ -58,10 +58,11 @@ pub fn exercise(bytes: &[u8]) {
         bytes.get(1).copied().unwrap_or(8),
         true,
     );
-    let words: alloc::vec::Vec<u32> = (0..12)
-        .map(|i| Config::read32(bytes, (i * 4) as u16))
+    let words: alloc::vec::Vec<u32> = (0..12u16)
+        .map(|i| Config::read32(bytes, i.saturating_mul(4)))
         .collect();
+    let (orig, probed) = words.split_at(6);
     for i in 0..6 {
-        let _ = pci::decode_bar(&words[..6], &words[6..], i);
+        let _ = pci::decode_bar(orig, probed, i);
     }
 }

@@ -157,7 +157,9 @@ impl Endpoint {
     }
     /// xHCI device-context index: `2 * number + (IN ? 1 : 0)`.
     pub fn dci(&self) -> u8 {
-        2 * self.number() + u8::from(self.is_in())
+        self.number()
+            .saturating_mul(2)
+            .saturating_add(u8::from(self.is_in()))
     }
 }
 
@@ -198,31 +200,31 @@ pub fn parse_config(b: &[u8]) -> Option<ConfigDescriptor> {
     };
     let mut off = usize::from(u8_at(b, 0)?);
     for _ in 0..MAX_DESCRIPTORS {
-        let (Some(len), Some(kind)) = (u8_at(b, off), u8_at(b, off + 1)) else {
+        let (Some(len), Some(kind)) = (u8_at(b, off), u8_at(b, off.saturating_add(1))) else {
             break;
         };
         let len = usize::from(len);
-        if len < 2 || off + len > b.len() {
+        let Some(d) = b.get(off..off.saturating_add(len)).filter(|_| len >= 2) else {
             break;
-        }
-        let d = &b[off..off + len];
+        };
+        let at = |i: usize| u8_at(d, i).unwrap_or(0);
         match kind {
             DT_INTERFACE if len >= 9 => cfg.interfaces.push(Interface {
-                number: d[2],
-                alt: d[3],
-                class: d[5],
-                subclass: d[6],
-                protocol: d[7],
+                number: at(2),
+                alt: at(3),
+                class: at(5),
+                subclass: at(6),
+                protocol: at(7),
                 endpoints: Vec::new(),
                 hid_report_len: None,
             }),
             DT_ENDPOINT if len >= 7 => {
                 if let Some(i) = cfg.interfaces.last_mut() {
                     i.endpoints.push(Endpoint {
-                        address: d[2],
-                        attributes: d[3],
+                        address: at(2),
+                        attributes: at(3),
                         max_packet: u16_at(d, 4).unwrap_or(0),
-                        interval: d[6],
+                        interval: at(6),
                         max_burst: 0,
                     });
                 }
@@ -233,14 +235,18 @@ pub fn parse_config(b: &[u8]) -> Option<ConfigDescriptor> {
                     .last_mut()
                     .and_then(|i| i.endpoints.last_mut())
                 {
-                    e.max_burst = d[2];
+                    e.max_burst = at(2);
                 }
             }
             DT_HID if len >= 9 => {
                 // bNumDescriptors at 5, then (type, length) pairs from 6.
-                let n = usize::from(d[5]);
+                let n = usize::from(at(5));
                 for k in 0..n {
-                    let (t, l) = (u8_at(d, 6 + 3 * k), u16_at(d, 7 + 3 * k));
+                    let base = k.saturating_mul(3);
+                    let (t, l) = (
+                        u8_at(d, base.saturating_add(6)),
+                        u16_at(d, base.saturating_add(7)),
+                    );
                     if let (Some(DT_REPORT), Some(l), Some(i)) = (t, l, cfg.interfaces.last_mut()) {
                         i.hid_report_len = Some(l);
                     }
@@ -248,7 +254,7 @@ pub fn parse_config(b: &[u8]) -> Option<ConfigDescriptor> {
             }
             _ => {}
         }
-        off += len;
+        off = off.saturating_add(len);
     }
     Some(cfg)
 }
@@ -338,9 +344,9 @@ pub fn interval_exponent(speed: u8, b_interval: u8) -> u8 {
         SPEED_LOW | SPEED_FULL => {
             // bInterval counts 1 ms frames = 8 microframes; round down to a power of two.
             let ms = u32::from(b_interval.max(1));
-            let units = ms * 8;
-            (31 - units.leading_zeros()).min(10) as u8
+            let units = ms.saturating_mul(8);
+            31u32.saturating_sub(units.leading_zeros()).min(10) as u8
         }
-        _ => b_interval.clamp(1, 16) - 1,
+        _ => b_interval.clamp(1, 16).saturating_sub(1),
     }
 }

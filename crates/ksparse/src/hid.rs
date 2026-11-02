@@ -69,10 +69,13 @@ struct Globals {
 fn item_value(b: &[u8], size: usize, signed: bool) -> i32 {
     let mut v: u32 = 0;
     for (i, &byte) in b.iter().take(size).enumerate() {
-        v |= u32::from(byte) << (8 * i);
+        let shift = u32::try_from(i).unwrap_or(0).saturating_mul(8);
+        v |= u32::from(byte).checked_shl(shift).unwrap_or(0);
     }
-    if signed && size > 0 && size < 4 && v >> (8 * size - 1) & 1 == 1 {
-        v |= u32::MAX << (8 * size);
+    let bits = u32::try_from(size).unwrap_or(0).saturating_mul(8);
+    if signed && size > 0 && size < 4 && v.checked_shr(bits.saturating_sub(1)).unwrap_or(0) & 1 == 1
+    {
+        v |= u32::MAX.checked_shl(bits).unwrap_or(0);
     }
     v as i32
 }
@@ -93,8 +96,8 @@ pub fn parse(desc: &[u8]) -> ReportDescriptor {
         let Some(prefix) = u8_at(desc, i) else { break };
         if prefix == 0xFE {
             // Long item: skip its data.
-            let len = usize::from(u8_at(desc, i + 1).unwrap_or(0));
-            i += 3 + len;
+            let len = usize::from(u8_at(desc, i.saturating_add(1)).unwrap_or(0));
+            i = i.saturating_add(3).saturating_add(len);
             continue;
         }
         let size = match prefix & 3 {
@@ -102,10 +105,11 @@ pub fn parse(desc: &[u8]) -> ReportDescriptor {
             n => usize::from(n),
         };
         let (kind, tag) = ((prefix >> 2) & 3, prefix >> 4);
-        let Some(data) = desc.get(i + 1..i + 1 + size) else {
+        let start = i.saturating_add(1);
+        let Some(data) = desc.get(start..start.saturating_add(size)) else {
             break;
         };
-        i += 1 + size;
+        i = start.saturating_add(size);
         let unsigned = item_value(data, size, false);
         let signed = item_value(data, size, true);
         match (kind, tag) {
@@ -145,7 +149,7 @@ pub fn parse(desc: &[u8]) -> ReportDescriptor {
             (2, 0x2) => usage_max = Some(unsigned as u16),
             // Main items.
             (0, 0xA) => {
-                depth = (depth + 1).min(MAX_COLLECTION_DEPTH);
+                depth = depth.saturating_add(1).min(MAX_COLLECTION_DEPTH);
                 usages.clear();
                 (usage_min, usage_max) = (None, None);
             }
@@ -162,14 +166,16 @@ pub fn parse(desc: &[u8]) -> ReportDescriptor {
                         // Input item.
                         if let (Some(lo), Some(hi)) = (usage_min, usage_max) {
                             if hi >= lo {
-                                let n = (usize::from(hi - lo) + 1).min(MAX_USAGES);
-                                usages.extend((0..n).map(|k| lo + k as u16));
+                                let n = usize::from(hi.saturating_sub(lo))
+                                    .saturating_add(1)
+                                    .min(MAX_USAGES);
+                                usages.extend((0..n).map(|k| lo.saturating_add(k as u16)));
                                 usages.truncate(MAX_USAGES);
                             }
                         }
                         out.fields.push(Field {
                             report_id: g.report_id,
-                            bit_offset: offsets[slot],
+                            bit_offset: offsets.get(slot).copied().unwrap_or(0),
                             bit_size: g.report_size as u8,
                             count: g.report_count.min(u32::from(u16::MAX)) as u16,
                             usage_page: g.usage_page,
@@ -182,7 +188,9 @@ pub fn parse(desc: &[u8]) -> ReportDescriptor {
                         });
                     }
                     if tag == 0x8 {
-                        offsets[slot] = offsets[slot].saturating_add(bits).min(MAX_REPORT_BITS);
+                        if let Some(o) = offsets.get_mut(slot) {
+                            *o = o.saturating_add(bits).min(MAX_REPORT_BITS);
+                        }
                     }
                 }
                 usages.clear();
@@ -205,13 +213,21 @@ pub fn extract(report: &[u8], bit_offset: u32, size: u8, signed: bool) -> Option
     }
     let mut v: u64 = 0;
     for k in 0..u32::from(size) {
-        let bit = bit_offset + k;
-        let byte = report[(bit / 8) as usize];
-        v |= u64::from(byte >> (bit % 8) & 1) << k;
+        let bit = bit_offset.saturating_add(k);
+        let byte = report.get((bit / 8) as usize).copied()?;
+        v |= u64::from((byte >> (bit % 8)) & 1)
+            .checked_shl(k)
+            .unwrap_or(0);
     }
     let mut v = v as u32;
-    if signed && size < 32 && v >> (size - 1) & 1 == 1 {
-        v |= u32::MAX << size;
+    if signed
+        && size < 32
+        && v.checked_shr(u32::from(size).saturating_sub(1))
+            .unwrap_or(0)
+            & 1
+            == 1
+    {
+        v |= u32::MAX.checked_shl(u32::from(size)).unwrap_or(0);
     }
     Some(v as i32)
 }
@@ -258,7 +274,9 @@ pub fn interpret(desc: &ReportDescriptor, report: &[u8]) -> Input {
             match (f.usage_page, f.variable) {
                 (PAGE_KEYBOARD, true) => {
                     if v != 0 && (0xE0..=0xE7).contains(&usage) {
-                        out.modifiers |= 1 << (usage - 0xE0);
+                        out.modifiers |= 1u8
+                            .checked_shl(u32::from(usage.wrapping_sub(0xE0)))
+                            .unwrap_or(0);
                     } else if v != 0 && out.keys.len() < 16 {
                         out.keys.push(usage as u8);
                     }
@@ -270,7 +288,9 @@ pub fn interpret(desc: &ReportDescriptor, report: &[u8]) -> Input {
                 }
                 (PAGE_BUTTON, true) => {
                     if v != 0 && (1..=32).contains(&usage) {
-                        out.buttons |= 1 << (usage - 1);
+                        out.buttons |= 1u32
+                            .checked_shl(u32::from(usage.wrapping_sub(1)))
+                            .unwrap_or(0);
                     }
                 }
                 (PAGE_GENERIC_DESKTOP, true) => match usage {
@@ -291,7 +311,11 @@ pub fn input_report_len(desc: &ReportDescriptor, report_id: u8) -> usize {
     desc.fields
         .iter()
         .filter(|f| f.report_id == report_id)
-        .map(|f| (f.bit_offset + u32::from(f.bit_size) * u32::from(f.count)).div_ceil(8) as usize)
+        .map(|f| {
+            f.bit_offset
+                .saturating_add(u32::from(f.bit_size).saturating_mul(u32::from(f.count)))
+                .div_ceil(8) as usize
+        })
         .max()
         .unwrap_or(0)
 }

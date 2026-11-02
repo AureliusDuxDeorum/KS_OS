@@ -9,6 +9,24 @@
 
 #![no_std]
 #![forbid(unsafe_code)]
+// Radio input must never be able to panic the host stack (ADR-0030 S-10/S-11, ADR-0031).
+#![deny(
+    clippy::indexing_slicing,
+    clippy::arithmetic_side_effects,
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic
+)]
+#![cfg_attr(
+    test,
+    allow(
+        clippy::indexing_slicing,
+        clippy::arithmetic_side_effects,
+        clippy::unwrap_used,
+        clippy::expect_used,
+        clippy::panic
+    )
+)]
 
 extern crate alloc;
 #[cfg(test)]

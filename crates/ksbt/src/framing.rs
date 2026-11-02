@@ -7,6 +7,7 @@
 //! the HCI header, and recover from garbage by resynchronising instead of growing without bound.
 
 use alloc::vec::Vec;
+use ksparse::bytes::{u16_at, u8_at};
 
 /// Which HCI packet header this stream carries.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -46,8 +47,8 @@ impl Assembler {
             return None;
         }
         Some(match self.kind {
-            Kind::Event => 2 + usize::from(self.buf[1]),
-            Kind::Acl => 4 + usize::from(u16::from_le_bytes([self.buf[2], self.buf[3]])),
+            Kind::Event => usize::from(u8_at(&self.buf, 1)?).saturating_add(2),
+            Kind::Acl => usize::from(u16_at(&self.buf, 2)?).saturating_add(4),
         })
     }
 

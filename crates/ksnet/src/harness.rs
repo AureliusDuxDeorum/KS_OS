@@ -4,6 +4,13 @@
 //! The contract is "must return": no panic, hang or out-of-bounds access, whatever the device wrote
 //! into its rings or whatever frames arrive from the wire.
 
+#![allow(
+    clippy::indexing_slicing,
+    clippy::arithmetic_side_effects,
+    clippy::unwrap_used,
+    reason = "the harness is test scaffolding: it builds simulated devices from fuzz input"
+)]
+
 use crate::dma::DmaMem;
 use crate::igc::{RxQueue, TxQueue, BUF_SIZE, DESC_SIZE};
 use crate::nic::{Mac, Nic};

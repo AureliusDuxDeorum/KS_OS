@@ -56,14 +56,16 @@ impl Policy {
         self.cooldown.retain(|(_, until)| *until > now);
         let mut order: Vec<usize> = (0..candidates.len())
             .filter(|&i| {
-                let c = &candidates[i];
+                let Some(c) = candidates.get(i) else {
+                    return false;
+                };
                 !c.already_connected
                     && !self.cooling_down(&c.address, now)
                     && (c.bonded || (window_open && c.pairable_hid))
             })
             .collect();
         // Bonded devices first, otherwise scan order; stable so results are deterministic.
-        order.sort_by_key(|&i| !candidates[i].bonded);
+        order.sort_by_key(|&i| candidates.get(i).is_none_or(|c| !c.bonded));
         order.truncate(MAX_ATTEMPTS_PER_ROUND);
         order
     }

@@ -13,6 +13,7 @@ use crate::crypto::{self, EphemeralKey};
 use crate::gatt::Error as LinkError;
 use crate::{Address, Rng};
 use alloc::vec::Vec;
+use ksparse::bytes::{array_at, tail, u8_at};
 use zeroize::Zeroize;
 
 pub const PAIRING_REQUEST: u8 = 0x01;
@@ -205,8 +206,11 @@ pub fn pair(
     ];
     link.send(&req)?;
     let rsp = expect(link, PAIRING_RESPONSE, 7)?;
-    let (peer_io, peer_oob, peer_auth, peer_key_size, peer_init_dist, peer_resp_dist) =
-        (rsp[1], rsp[2], rsp[3], rsp[4], rsp[5], rsp[6]);
+    let Some([peer_io, peer_oob, peer_auth, peer_key_size, peer_init_dist, peer_resp_dist]) =
+        array_at::<6>(&rsp, 1)
+    else {
+        return abort(link, reason::INVALID_PARAMETERS, "short pairing response");
+    };
     if peer_auth & AUTH_SECURE_CONNECTIONS == 0 {
         return abort(
             link,
@@ -242,9 +246,10 @@ pub fn pair(
     pk_msg.extend_from_slice(&pk_ay);
     link.send(&pk_msg)?;
     let peer_pk = expect(link, PAIRING_PUBLIC_KEY, 65)?;
-    let (mut pk_bx, mut pk_by) = ([0u8; 32], [0u8; 32]);
-    pk_bx.copy_from_slice(&peer_pk[1..33]);
-    pk_by.copy_from_slice(&peer_pk[33..65]);
+    let (Some(pk_bx), Some(pk_by)) = (array_at::<32>(&peer_pk, 1), array_at::<32>(&peer_pk, 33))
+    else {
+        return abort(link, reason::INVALID_PARAMETERS, "short public key");
+    };
     if pk_bx == pk_ax {
         return abort(
             link,
@@ -271,10 +276,11 @@ pub fn pair(
             m.extend_from_slice(&n_a);
             link.send(&m)?;
             let n_b_pdu = expect(link, PAIRING_RANDOM, 17)?;
-            let mut n_b = [0u8; 16];
-            n_b.copy_from_slice(&n_b_pdu[1..]);
+            let Some(n_b) = array_at::<16>(&n_b_pdu, 1) else {
+                return abort(link, reason::INVALID_PARAMETERS, "short random");
+            };
             // Cb = f4(PKb, PKa, Nb, 0)
-            if crypto::f4(&pk_bx, &pk_ax, &n_b, 0)[..] != cb[1..] {
+            if crypto::f4(&pk_bx, &pk_ax, &n_b, 0)[..] != *tail(&cb, 1) {
                 return abort(
                     link,
                     reason::CONFIRM_VALUE_FAILED,
@@ -324,9 +330,12 @@ pub fn pair(
                 m.extend_from_slice(&n_ai);
                 link.send(&m)?;
                 let nb_pdu = expect(link, PAIRING_RANDOM, 17)?;
-                let mut n_bi = [0u8; 16];
-                n_bi.copy_from_slice(&nb_pdu[1..]);
-                if crypto::f4(&pk_bx, &pk_ax, &n_bi, ri[0])[..] != cb[1..] {
+                let Some(n_bi) = array_at::<16>(&nb_pdu, 1) else {
+                    return abort(link, reason::INVALID_PARAMETERS, "short random");
+                };
+                if crypto::f4(&pk_bx, &pk_ax, &n_bi, ri.first().copied().unwrap_or(0))[..]
+                    != *tail(&cb, 1)
+                {
                     return abort(
                         link,
                         reason::PASSKEY_ENTRY_FAILED,
@@ -352,7 +361,7 @@ pub fn pair(
     let eb_pdu = expect(link, PAIRING_DHKEY_CHECK, 17)?;
     let eb = crypto::f6(&mac_key, &nb, &na, &ra, &io_b, &b, &a);
     mac_key.zeroize();
-    if eb[..] != eb_pdu[1..] {
+    if eb[..] != *tail(&eb_pdu, 1) {
         return abort(link, reason::DHKEY_CHECK_FAILED, "peer DHKey check failed");
     }
     Ok(Keys {
@@ -369,15 +378,11 @@ pub fn receive_identity(link: &mut impl SmpLink, keys: &mut Keys, wait_ms: u64) 
     for _ in 0..4 {
         let Ok(pdu) = link.recv(wait_ms) else { return };
         match (pdu.first(), pdu.len()) {
-            (Some(&IDENTITY_INFORMATION), 17) => {
-                let mut irk = [0u8; 16];
-                irk.copy_from_slice(&pdu[1..]);
-                keys.peer_irk = Some(irk);
-            }
+            (Some(&IDENTITY_INFORMATION), 17) => keys.peer_irk = array_at::<16>(&pdu, 1),
             (Some(&IDENTITY_ADDRESS_INFORMATION), 8) => {
-                let mut bytes = [0u8; 6];
-                bytes.copy_from_slice(&pdu[2..8]);
-                keys.peer_identity = Some(Address::new(pdu[1], bytes));
+                if let (Some(kind), Some(bytes)) = (u8_at(&pdu, 1), array_at::<6>(&pdu, 2)) {
+                    keys.peer_identity = Some(Address::new(kind, bytes));
+                }
             }
             _ => {}
         }

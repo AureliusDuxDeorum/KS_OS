@@ -121,7 +121,7 @@ impl<T: Transport> Host<T> {
             Event::Disconnection { handle, .. } => self.conns.retain(|c| c.handle != *handle),
             Event::NumCompletedPackets(list) => {
                 for (_, n) in list {
-                    self.credits += u32::from(*n);
+                    self.credits = self.credits.saturating_add(u32::from(*n));
                 }
             }
             Event::EncryptionChange {
@@ -168,12 +168,12 @@ impl<T: Transport> Host<T> {
         match frame.cid {
             l2cap::CID_ATT => match frame.payload.first() {
                 Some(&op) if crate::att::is_server_initiated(op) && frame.payload.len() >= 3 => {
-                    let handle = u16::from_le_bytes([frame.payload[1], frame.payload[2]]);
+                    let handle = ksparse::bytes::u16_at(&frame.payload, 1).unwrap_or(0);
                     if self.notifications.len() < 64 {
                         self.notifications.push_back((
                             h.handle,
                             handle,
-                            frame.payload[3..].to_vec(),
+                            ksparse::bytes::tail(&frame.payload, 3).to_vec(),
                         ));
                     }
                     if op == crate::att::OP_HANDLE_VALUE_IND {
@@ -217,7 +217,7 @@ impl<T: Transport> Host<T> {
     fn send_l2cap(&mut self, handle: u16, cid: u16, payload: &[u8]) -> Result<(), HostError> {
         for pkt in l2cap::fragment(handle, cid, payload, self.acl_len) {
             // Respect the controller's buffer count; wait for completions when exhausted.
-            let deadline = self.transport.now_ms() + 1000;
+            let deadline = self.transport.now_ms().saturating_add(1000);
             while self.credits == 0 && self.info.is_some() {
                 if self.transport.now_ms() > deadline {
                     return Err(HostError::Timeout);
@@ -235,7 +235,7 @@ impl<T: Transport> Host<T> {
     /// Sends a command and waits for its completion; returns the return parameters after the status.
     pub fn command(&mut self, cmd: Command) -> Result<Vec<u8>, HostError> {
         self.send_command(&cmd)?;
-        let deadline = self.transport.now_ms() + COMMAND_TIMEOUT_MS;
+        let deadline = self.transport.now_ms().saturating_add(COMMAND_TIMEOUT_MS);
         loop {
             // Look through everything already received first.
             if let Some(pos) = self.events.iter().position(|e| matches!(e, Event::CommandComplete { opcode, .. } | Event::CommandStatus { opcode, .. } if *opcode == cmd.opcode)) {
@@ -300,7 +300,7 @@ impl<T: Transport> Host<T> {
     ) -> Result<(), HostError> {
         self.command(Command::le_set_scan_parameters(true, 0x0060, 0x0030))?;
         self.command(Command::le_set_scan_enable(true, false))?;
-        let deadline = self.transport.now_ms() + duration_ms;
+        let deadline = self.transport.now_ms().saturating_add(duration_ms);
         while self.transport.now_ms() < deadline {
             self.pump(20);
             while let Some(i) = self
@@ -321,7 +321,7 @@ impl<T: Transport> Host<T> {
     pub fn connect(&mut self, peer: Address, timeout_ms: u64) -> Result<u16, HostError> {
         // 7.5 ms .. 30 ms are typical HID intervals; request 15 ms (units of 1.25 ms), 6 s supervision.
         self.command(Command::le_create_connection(peer, 12, 0, 600))?;
-        let deadline = self.transport.now_ms() + timeout_ms;
+        let deadline = self.transport.now_ms().saturating_add(timeout_ms);
         loop {
             if let Some(i) = self
                 .events
@@ -362,7 +362,7 @@ impl<T: Transport> Host<T> {
     /// and waits for the result.
     pub fn start_encryption(&mut self, handle: u16, ltk: [u8; 16]) -> Result<(), HostError> {
         self.command(Command::le_start_encryption(handle, [0; 8], 0, ltk))?;
-        let deadline = self.transport.now_ms() + 5000;
+        let deadline = self.transport.now_ms().saturating_add(5000);
         loop {
             if let Some(i) = self.events.iter().position(
                 |e| matches!(e, Event::EncryptionChange { handle: h, .. } if *h == handle),
@@ -428,7 +428,7 @@ pub struct AttChannel<'a, T: Transport> {
 impl<T: Transport> AttLink for AttChannel<'_, T> {
     fn request(&mut self, pdu: &[u8]) -> Result<Vec<u8>, gatt::Error> {
         self.host.send_l2cap(self.handle, l2cap::CID_ATT, pdu)?;
-        let deadline = self.host.transport.now_ms() + 5000;
+        let deadline = self.host.transport.now_ms().saturating_add(5000);
         loop {
             let conn = self
                 .host
@@ -460,7 +460,7 @@ impl<T: Transport> SmpLink for SmpChannel<'_, T> {
     }
 
     fn recv(&mut self, timeout_ms: u64) -> Result<Vec<u8>, gatt::Error> {
-        let deadline = self.host.transport.now_ms() + timeout_ms;
+        let deadline = self.host.transport.now_ms().saturating_add(timeout_ms);
         loop {
             let conn = self
                 .host
