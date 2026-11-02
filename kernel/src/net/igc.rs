@@ -80,6 +80,10 @@ impl Igc {
         pci::command_set(dev.addr, ksparse::pci::CMD_INTX_DISABLE);
         let base = pci::map_bar(boot, dev, 0).map_err(|e| format!("BAR0: {e:?}"))?;
         let bar_len = dev.bars[0].map_or(BAR0_LEN, |b| b.size).min(BAR0_LEN);
+        // The queue registers end at 0xE02C; a smaller BAR would make register accesses panic.
+        if bar_len < 0xF000 {
+            return Err(format!("BAR0 is only {bar_len:#x} bytes"));
+        }
         let regs = Mmio::new(base, bar_len);
 
         // 1. Quiesce and reset.

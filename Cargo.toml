@@ -4,7 +4,7 @@ members = ["kernel", "xtask", "crates/ksparse", "crates/ksbt", "crates/ksnet"]
 
 [workspace.package]
 # The single source of truth for the release version (X.Y.Z, see docs/VERSIONING.md).
-version = "0.2.0"
+version = "0.2.1"
 edition = "2021"
 license = "Apache-2.0"
 publish = false
@@ -15,5 +15,7 @@ panic = "abort"
 [profile.release]
 panic = "abort"
 lto = true
+# Fail-stop on integer overflow instead of silently wrapping (ADR-0030 S-04).
+overflow-checks = true
 codegen-units = 1
 debug = "line-tables-only"

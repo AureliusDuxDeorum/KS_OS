@@ -331,6 +331,44 @@ pub fn cpuid(leaf: u32, sub: u32) -> core::arch::x86_64::CpuidResult {
     core::arch::x86_64::__cpuid_count(leaf, sub)
 }
 
+pub const CR0_WP: u64 = 1 << 16;
+pub const CR4_UMIP: u64 = 1 << 11;
+pub const CR4_SMEP: u64 = 1 << 20;
+pub const CR4_SMAP: u64 = 1 << 21;
+
+/// CR4 protection bits this CPU supports according to CPUID leaf 7.
+pub fn supported_protections() -> u64 {
+    if cpuid(0, 0).eax < 7 {
+        return 0;
+    }
+    let l7 = cpuid(7, 0);
+    let mut bits = 0;
+    if l7.ebx & (1 << 7) != 0 {
+        bits |= CR4_SMEP;
+    }
+    if l7.ebx & (1 << 20) != 0 {
+        bits |= CR4_SMAP;
+    }
+    if l7.ecx & (1 << 2) != 0 {
+        bits |= CR4_UMIP;
+    }
+    bits
+}
+
+/// Turns on SMEP, SMAP and UMIP where available and makes sure CR0.WP is set (ADR-0030 S-03).
+/// The kernel never executes or touches user pages, so none of them can break it. Returns the
+/// protection bits that are active in CR4.
+pub fn enable_protections() -> u64 {
+    let want = supported_protections();
+    // SAFETY: only sets protection bits the CPU reported as supported, plus CR0.WP which the
+    // kernel's read-only mappings already rely on.
+    unsafe {
+        write_cr4(read_cr4() | want);
+        write_cr0(read_cr0() | CR0_WP);
+    }
+    read_cr4() & (CR4_SMEP | CR4_SMAP | CR4_UMIP)
+}
+
 /// Runs `f` with maskable interrupts disabled, restoring the previous state afterwards.
 pub fn without_interrupts<R>(f: impl FnOnce() -> R) -> R {
     let were_enabled = interrupts_enabled();

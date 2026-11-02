@@ -631,6 +631,22 @@ fn net_test(ctx: &Ctx, nic: &str, tag: &str) -> Result<String> {
     Ok(log)
 }
 
+fn test_cpu_protections(ctx: &Ctx, _image: &Path) -> Result<()> {
+    let log = selftest_log_with(
+        ctx,
+        "cpu-protections",
+        "selftest: cpu-protections ok",
+        &["-cpu", "max"],
+    )?;
+    expect_all(
+        &log,
+        "cpu-protections",
+        &["cpu: protections SMEP=true SMAP=true UMIP=true WP=true"],
+    )?;
+    println!("ok   SMEP, SMAP, UMIP and CR0.WP are enabled");
+    Ok(())
+}
+
 fn test_net_virtio(ctx: &Ctx, _image: &Path) -> Result<()> {
     let log = net_test(ctx, "virtio-net-pci,disable-legacy=on", "virtio-net")?;
     expect_all(
@@ -668,7 +684,7 @@ fn test_net_igb(ctx: &Ctx, _image: &Path) -> Result<()> {
 pub fn run_all(ctx: &Ctx, image: &Path) -> Result<()> {
     let mut failed = 0;
     type TestFn = fn(&Ctx, &Path) -> Result<()>;
-    let tests: [(&str, TestFn); 25] = [
+    let tests: [(&str, TestFn); 26] = [
         ("ksparse", test_ksparse_host),
         ("boot", test_boot_banner),
         ("poweroff-key", test_power_off_key),
@@ -690,6 +706,7 @@ pub fn run_all(ctx: &Ctx, image: &Path) -> Result<()> {
         ("usb-bulk", test_usb_bulk),
         ("x2apic", test_x2apic),
         ("nmi-real", test_nmi_real),
+        ("cpu-protections", test_cpu_protections),
         ("net-virtio", test_net_virtio),
         ("net-igb", test_net_igb),
         ("memory", test_memory_selftests),

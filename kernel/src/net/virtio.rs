@@ -106,6 +106,11 @@ impl VirtioNet {
                 pci::map_bar(boot, dev, usize::from(c.bar)).map_err(|e| format!("map: {e:?}"))?;
             Ok(Mmio::new(base + u64::from(c.offset), u64::from(c.length)))
         };
+        // A malicious or buggy device could advertise structures too small for the accesses below
+        // (every `Mmio` access is bounds-checked and would panic): validate instead (ADR-0030 S-05).
+        if cc.length < 0x38 || dc.length < 8 || nc.length < 2 {
+            return Err("virtio capability regions are too small".into());
+        }
         let common = map(cc)?;
         let notify_base = map(nc)?;
         let device_cfg = map(dc)?;
@@ -170,6 +175,13 @@ impl VirtioNet {
             common.w64(v::CC_QUEUE_DRIVER, mem.phys + layout.avail as u64);
             common.w64(v::CC_QUEUE_DEVICE, mem.phys + layout.used as u64);
             let notify = common.r16(v::CC_QUEUE_NOTIFY_OFF);
+            let notify_byte = usize::from(notify) * nc.multiplier as usize;
+            if notify_byte
+                .checked_add(2)
+                .is_none_or(|e| e > nc.length as usize)
+            {
+                return Err(format!("queue {index}: notify offset outside its region"));
+            }
             common.w16(v::CC_QUEUE_ENABLE, 1);
             Ok(Queue {
                 vq,
@@ -177,7 +189,7 @@ impl VirtioNet {
                 bufs,
                 slot_of: alloc::vec![0; usize::from(size)],
                 free_slots: (0..size).collect(),
-                notify: usize::from(notify) * nc.multiplier as usize,
+                notify: notify_byte,
             })
         };
         let rx = mk(0)?;

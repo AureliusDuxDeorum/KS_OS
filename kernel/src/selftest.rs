@@ -68,6 +68,20 @@ pub fn run(name: &str, boot: &BootInfo) {
             crate::time::sleep_ms(20);
         }
         "rng" => test_rng(),
+        "cpu-protections" => {
+            let want = arch::supported_protections();
+            let have = arch::read_cr4() & (arch::CR4_SMEP | arch::CR4_SMAP | arch::CR4_UMIP);
+            check(
+                want != 0,
+                "the CPU offers SMEP/SMAP/UMIP (run with -cpu max)",
+            );
+            check(
+                have == want,
+                "every supported protection bit is enabled in CR4",
+            );
+            check(arch::read_cr0() & arch::CR0_WP != 0, "CR0.WP is set");
+            kprintln!("selftest: cpu-protections ok");
+        }
         "usb" => test_usb(),
         "usb-hid" => test_usb_hid(),
         "usb-bot" => test_usb_bot(),
