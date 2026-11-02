@@ -491,6 +491,7 @@ version = "0.3.0"
 dependencies = [
  "font8x8",
  "ksbt",
+ "ksiommu",
  "ksnet",
  "ksparse",
  "spin",
@@ -506,6 +507,10 @@ dependencies = [
  "p256",
  "zeroize",
 ]
+
+[[package]]
+name = "ksiommu"
+version = "0.3.0"
 
 [[package]]
 name = "ksnet"

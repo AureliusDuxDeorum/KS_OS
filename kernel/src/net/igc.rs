@@ -134,7 +134,8 @@ impl Igc {
         }
 
         // 4. Rings.
-        let alloc = |len: usize| Dma::alloc(boot.hhdm, len, false).ok_or("out of DMA memory");
+        let alloc =
+            |len: usize| Dma::alloc_for(dev.addr, boot.hhdm, len, false).ok_or("out of DMA memory");
         let rx_desc = alloc(RxQueue::ring_bytes(RING))?;
         let rx_bufs = alloc(RxQueue::buffer_bytes(RING))?;
         let tx_desc = alloc(RxQueue::ring_bytes(RING))?;

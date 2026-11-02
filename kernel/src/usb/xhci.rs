@@ -97,9 +97,9 @@ struct Ring {
 }
 
 impl Ring {
-    fn new(hhdm: u64, below_4g: bool) -> Option<Self> {
+    fn new(owner: pci::Address, hhdm: u64, below_4g: bool) -> Option<Self> {
         Some(Self {
-            dma: Dma::alloc(hhdm, RING_TRBS * 16, below_4g)?,
+            dma: Dma::alloc_for(owner, hhdm, RING_TRBS * 16, below_4g)?,
             enq: 0,
             pcs: true,
         })
@@ -179,6 +179,8 @@ pub(super) struct Controller {
     db: u64,
     hhdm: u64,
     below_4g: bool,
+    /// PCI function of the controller: all its DMA buffers are mapped into this IOMMU domain.
+    owner: pci::Address,
     csz: usize,
     pub max_ports: u8,
     dcbaa: Dma,
@@ -472,16 +474,17 @@ pub fn init(boot: &BootInfo, dev: &pci::Device) -> Result<usize, UsbError> {
     mmio_write32(op + CONFIG, max_slots as u32);
 
     let hhdm = boot.hhdm;
+    let owner = dev.addr;
     let oom = || UsbError::OutOfMemory;
-    let dcbaa = Dma::alloc(hhdm, 4096, below_4g).ok_or_else(oom)?;
+    let dcbaa = Dma::alloc_for(owner, hhdm, 4096, below_4g).ok_or_else(oom)?;
     // Scratchpad buffers the controller wants for its own use.
     let n_scratch = (((hcs2 >> 21) & 0x1F) << 5 | ((hcs2 >> 27) & 0x1F)) as usize;
     let mut scratch_pages = Vec::new();
     let mut scratch_array = Vec::new();
     if n_scratch > 0 {
-        let array = Dma::alloc(hhdm, n_scratch * 8, below_4g).ok_or_else(oom)?;
+        let array = Dma::alloc_for(owner, hhdm, n_scratch * 8, below_4g).ok_or_else(oom)?;
         for i in 0..n_scratch {
-            let page = Dma::alloc(hhdm, 4096, below_4g).ok_or_else(oom)?;
+            let page = Dma::alloc_for(owner, hhdm, 4096, below_4g).ok_or_else(oom)?;
             array.write64(i * 8, page.phys);
             scratch_pages.push(page);
         }
@@ -490,11 +493,11 @@ pub fn init(boot: &BootInfo, dev: &pci::Device) -> Result<usize, UsbError> {
     }
     mmio_write64(op + DCBAAP, dcbaa.phys);
 
-    let cmd = Ring::new(hhdm, below_4g).ok_or_else(oom)?;
+    let cmd = Ring::new(owner, hhdm, below_4g).ok_or_else(oom)?;
     mmio_write64(op + CRCR, cmd.dma.phys | 1);
 
-    let ev_ring = Dma::alloc(hhdm, RING_TRBS * 16, below_4g).ok_or_else(oom)?;
-    let erst = Dma::alloc(hhdm, 4096, below_4g).ok_or_else(oom)?;
+    let ev_ring = Dma::alloc_for(owner, hhdm, RING_TRBS * 16, below_4g).ok_or_else(oom)?;
+    let erst = Dma::alloc_for(owner, hhdm, 4096, below_4g).ok_or_else(oom)?;
     erst.write64(0, ev_ring.phys);
     erst.write32(8, RING_TRBS as u32);
     mmio_write32(rt + 0x28, 1); // ERSTSZ
@@ -503,7 +506,7 @@ pub fn init(boot: &BootInfo, dev: &pci::Device) -> Result<usize, UsbError> {
     mmio_write32(rt + 0x20, 2 | 1); // IMAN: interrupt enable, clear pending
     mmio_write32(rt + 0x24, 0); // IMOD: no moderation
 
-    let control_buf = Dma::alloc(hhdm, 4096, below_4g).ok_or_else(oom)?;
+    let control_buf = Dma::alloc_for(owner, hhdm, 4096, below_4g).ok_or_else(oom)?;
     let mut slots = Vec::new();
     slots.resize_with(SLOT_LIMIT + 1, || None);
     let ctrl = Controller {
@@ -512,6 +515,7 @@ pub fn init(boot: &BootInfo, dev: &pci::Device) -> Result<usize, UsbError> {
         db,
         hhdm,
         below_4g,
+        owner,
         csz: if hcc1 & (1 << 2) != 0 { 64 } else { 32 },
         max_ports,
         dcbaa,
@@ -684,10 +688,11 @@ pub fn address_device(ctrl: usize, at: Attach) -> Result<DeviceRef, UsbError> {
         {
             let mut g = CONTROLLERS.lock();
             let c = g.get_mut(ctrl).ok_or(UsbError::NoDevice)?;
-            let (hhdm, below) = (c.hhdm, c.below_4g);
-            let dev_ctx = Dma::alloc(hhdm, 4096, below).ok_or(UsbError::OutOfMemory)?;
-            let input_ctx = Dma::alloc(hhdm, 4096, below).ok_or(UsbError::OutOfMemory)?;
-            let ep0 = Ring::new(hhdm, below).ok_or(UsbError::OutOfMemory)?;
+            let (hhdm, below, owner) = (c.hhdm, c.below_4g, c.owner);
+            let dev_ctx = Dma::alloc_for(owner, hhdm, 4096, below).ok_or(UsbError::OutOfMemory)?;
+            let input_ctx =
+                Dma::alloc_for(owner, hhdm, 4096, below).ok_or(UsbError::OutOfMemory)?;
+            let ep0 = Ring::new(owner, hhdm, below).ok_or(UsbError::OutOfMemory)?;
             c.dcbaa.write64(usize::from(slot) * 8, dev_ctx.phys);
             let mps = u32::from(fmt::default_ep0_packet_size(at.speed));
             // Input control context: add slot and EP0.
@@ -818,7 +823,7 @@ pub fn configure_endpoints(
     {
         let mut g = CONTROLLERS.lock();
         let c = g.get_mut(usize::from(dev.ctrl)).ok_or(UsbError::NoDevice)?;
-        let (csz, hhdm, below) = (c.csz, c.hhdm, c.below_4g);
+        let (csz, hhdm, below, owner) = (c.csz, c.hhdm, c.below_4g, c.owner);
         let s = c.slot_mut(dev.slot)?;
         let speed = s.speed;
         for i in 0..32 * csz / 4 {
@@ -846,7 +851,7 @@ pub fn configure_endpoints(
             s.input_ctx.write32(csz + i * 4, *d);
         }
         for e in eps {
-            let ring = Ring::new(hhdm, below).ok_or(UsbError::OutOfMemory)?;
+            let ring = Ring::new(owner, hhdm, below).ok_or(UsbError::OutOfMemory)?;
             let ep_type: u32 = match (e.kind, e.is_in) {
                 (fmt::TransferKind::Isochronous, false) => 1,
                 (fmt::TransferKind::Bulk, false) => 2,
@@ -1079,5 +1084,5 @@ pub fn set_endpoint_handler(dev: DeviceRef, dci: u8, handler: EndpointHandler) {
 pub fn alloc_buffer(dev: DeviceRef, len: usize) -> Option<Dma> {
     let g = CONTROLLERS.lock();
     let c = g.get(usize::from(dev.ctrl))?;
-    Dma::alloc(c.hhdm, len, c.below_4g)
+    Dma::alloc_for(c.owner, c.hhdm, len, c.below_4g)
 }

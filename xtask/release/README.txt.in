@@ -9,6 +9,8 @@ What is in this folder
 ----------------------
   KS_OS-v{version}.img        the bootable disk image (this is the file you write to a USB stick)
   add-bluetooth-firmware.sh   adds Bluetooth firmware to the image (see below)
+  secure-boot.sh              optional: UEFI Secure Boot with your own keys (see below)
+  set-cmdline.sh              optional: change the kernel options stored in the image (e.g. iommu=off)
   SHA256SUMS                  checksums:  sha256sum -c SHA256SUMS
   LICENSE, NOTICE             the KS_OS licence (Apache-2.0) and its notice
   THIRD-PARTY-LICENSES.txt    licences of every third-party part that is inside the image
@@ -21,8 +23,32 @@ Linux:    lsblk                                  # find the stick, e.g. /dev/sdX
 macOS:    sudo dd if=KS_OS-v{version}.img of=/dev/rdiskN bs=4m
 Windows:  Rufus ("DD Image" mode) or balenaEtcher: select the .img file and the stick.
 
-Then boot the PC from the stick (firmware boot menu). Secure Boot must be OFF: the image is not
-signed. Nothing in this image writes to your disks.
+Then boot the PC from the stick (firmware boot menu). Secure Boot must be OFF unless you sign the
+image yourself (next section). Nothing in this image writes to your disks.
+
+Tamper protection and Secure Boot
+---------------------------------
+The kernel, the firmware files and the boot configuration are pinned by hash: the bootloader refuses to
+start (and says so on screen) if any of them was changed on the stick. That protects against modified
+sticks even with Secure Boot off.
+
+To also keep the bootloader itself from being replaced, use Secure Boot with YOUR OWN keys (the private keys
+never leave your PC, nobody else can sign images for it):
+
+    ./secure-boot.sh keys                          # once; creates ~/.ks_os-secureboot
+    ./add-bluetooth-firmware.sh KS_OS-v{version}.img ~/ksfw     # if you use Bluetooth (BEFORE signing)
+    ./secure-boot.sh sign KS_OS-v{version}.img     # signs the bootloader inside the image
+
+Then, once, in your PC's firmware setup: put Secure Boot into Setup Mode and enrol db.auth, KEK.auth and
+PK.auth from ~/.ks_os-secureboot (names and menus differ per vendor; some want the .cer files).
+Back up the *.key files. If you lose them, switch Secure Boot off again to boot anything unsigned.
+
+DMA protection (IOMMU)
+----------------------
+The kernel turns on the IOMMU (Intel VT-d / AMD-Vi) when the firmware has it enabled, so a device can only
+reach memory its driver gave it. If a machine misbehaves with it (devices stop working), run
+    ./set-cmdline.sh KS_OS-v{version}.img "iommu=off"
+write the image again, and send back the log (press L): lines starting with "iommu:".
 
 What you will see
 -----------------

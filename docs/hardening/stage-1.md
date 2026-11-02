@@ -154,3 +154,19 @@ S-15 (unauthenticated boot chain). See the ADR for the full table.
 - Residual risk: with Secure Boot **off**, an attacker who can replace `BOOTX64.EFI` *and* `limine.conf` consistently can
   still boot their own kernel; Secure Boot with owner keys closes that. Signed images are not byte-reproducible (PKCS#7 time).
 
+## 15. Addendum (2026-11-02, Phase F — IOMMU, ADR-0030 S-14)
+- **DMA remapping is on by default** when the firmware exposes `DMAR` (Intel VT-d) or `IVRS` (AMD-Vi) and enabled
+  it: every PCI function is blocked until its driver maps memory for it (`Dma::alloc_for(owner, ..)` ->
+  `iommu::map_identity`; xHCI, igc/igb and virtio-net are migrated). Firmware reserved regions (RMRR / IVMD) stay
+  mapped for the devices that need them. Faults are logged (`iommu: BLOCKED DMA ...`) and counted.
+- Pure parts are host-tested/fuzzed: `ksparse::iommu` (DMAR/IVRS parsers, in the `parsers` fuzz target) and
+  `ksiommu` (page tables in VT-d and AMD-Vi formats, root/context/device-table entries, software walker).
+- QEMU tests `iommu-vtd` and `iommu-amd`: edu DMA, USB (incl. bulk) and virtio-net work with translation on, and a DMA
+  write to an unmapped frame leaves memory untouched (VT-d additionally reports it as a fault; QEMU's AMD-Vi model
+  blocks silently).
+- **Escape hatch**: `iommu=off` on the kernel command line, settable on a finished image with `set-cmdline.sh`.
+- **Not done (stays open)**: interrupt remapping (MSI/IOAPIC sources are not authenticated), ATS/PASID, queued
+  invalidation (register-based invalidation is used), per-buffer lifetime tracking beyond `Dma::free`, and everything is
+  **hardware-unverified** (only QEMU's models). Expect real firmware quirks; the first hardware test must read the
+  `iommu:` lines.
+

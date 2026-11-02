@@ -620,6 +620,10 @@ fn test_pci_edu(boot: &BootInfo) {
 
     // DMA within the device's 28-bit address limit, using the PMM's DMA allocator.
     let buf = pmm::alloc_contiguous(1, 1, 1 << 28).expect("DMA frame below 256 MiB");
+    check(
+        crate::iommu::map_identity(dev.addr, buf, 4096),
+        "the IOMMU (if any) lets the device reach its DMA buffer",
+    );
     let virt = (boot.hhdm + buf) as *mut u8;
     for i in 0..4096usize {
         // SAFETY: we own this frame.
@@ -647,6 +651,46 @@ fn test_pci_edu(boot: &BootInfo) {
     // SAFETY: we own this frame.
     let ok = (0..4096usize).all(|i| unsafe { virt.add(i).read() } == (i * 7 + 3) as u8);
     check(ok, "4 KiB survives the round trip through device memory");
+    // With an IOMMU active, memory that was never mapped for this device must be unreachable.
+    if let Some((name, devices, pages)) = crate::iommu::status() {
+        kprintln!(
+            "selftest: iommu active: {name}, {devices} device domain(s), {pages} page(s) mapped"
+        );
+        let forbidden = pmm::alloc_contiguous(1, 1, 1 << 28).expect("second DMA frame");
+        let fvirt = (boot.hhdm + forbidden) as *mut u8;
+        // SAFETY: we own this frame.
+        unsafe { core::ptr::write_bytes(fvirt, 0xAA, 4096) };
+        let faults_before = crate::iommu::fault_count();
+        // Device memory (still holding the test pattern) -> the frame the device was NOT given.
+        let _ = dma(0x40000, forbidden, 1 | 2);
+        let t0 = time::now_ns();
+        while crate::iommu::fault_count() == faults_before && time::now_ns() - t0 < 2_000_000_000 {
+            crate::iommu::service();
+            time::sleep_ms(1);
+        }
+        // The security property: the memory is untouched. Fault *reporting* is asserted for VT-d; QEMU's
+        // AMD-Vi model blocks the write silently (no event-log entry for a not-present PTE).
+        if name == "Intel VT-d" {
+            check(
+                crate::iommu::fault_count() > faults_before,
+                "a DMA write to memory not mapped for the device is reported as a fault",
+            );
+        } else {
+            kprintln!(
+                "selftest: iommu fault records: {}",
+                crate::iommu::fault_count() - faults_before
+            );
+        }
+        // SAFETY: we own this frame.
+        let untouched = (0..4096usize).all(|i| unsafe { fvirt.add(i).read() } == 0xAA);
+        check(
+            untouched,
+            "a DMA write to memory not mapped for the device is blocked (memory untouched)",
+        );
+        pmm::free(forbidden);
+        kprintln!("selftest: iommu block ok");
+    }
+    crate::iommu::unmap(dev.addr, buf, 4096);
     pmm::free(buf);
     kprintln!(
         "selftest: pci-edu ok ({} interrupts)",

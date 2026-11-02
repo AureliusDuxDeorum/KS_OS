@@ -1,0 +1,9 @@
+[package]
+name = "ksiommu"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "KS_OS IOMMU building blocks: I/O page tables, Intel VT-d root/context entries and AMD-Vi device-table entries as pure, host-testable code."
+
+[dependencies]

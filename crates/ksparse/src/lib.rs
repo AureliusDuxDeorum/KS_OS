@@ -36,6 +36,7 @@ pub mod bytes;
 pub mod efi;
 pub mod harness;
 pub mod hid;
+pub mod iommu;
 pub mod madt;
 pub mod mcfg;
 pub mod pci;

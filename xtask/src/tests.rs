@@ -562,6 +562,69 @@ fn test_pci_msi(ctx: &Ctx, _image: &Path) -> Result<()> {
     Ok(())
 }
 
+/// Runs edu (DMA), xHCI+USB devices and virtio-net with the given IOMMU emulated. Everything that worked
+/// without an IOMMU must still work (drivers map their buffers), and DMA to unmapped memory must fault.
+fn iommu_suite(ctx: &Ctx, iommu_dev: &str, banner: &str) -> Result<()> {
+    let mut pci_args: Vec<&str> = PCI_DEVICES.to_vec();
+    pci_args.extend(["-device", iommu_dev]);
+    let log = selftest_log_with(ctx, "pci-edu", "selftest: pci-edu ok", &pci_args)?;
+    expect_all(
+        &log,
+        "iommu/pci-edu",
+        &[
+            banner,
+            "iommu active:",
+            "iommu block ok",
+            "DMA RAM -> device completes",
+        ],
+    )?;
+    let mut usb_args: Vec<&str> = USB_DEVICES.to_vec();
+    usb_args.extend(["-device", iommu_dev]);
+    let log = selftest_log_with(ctx, "usb", "selftest: usb ok", &usb_args)?;
+    expect_all(&log, "iommu/usb", &[banner])?;
+    let log = selftest_log_with(
+        ctx,
+        "usb-bot",
+        "selftest: usb-bot ok",
+        &{
+            let mut v: Vec<String> = Vec::new();
+            v.extend(usb_args.iter().map(|s| (*s).to_owned()));
+            let disk = usb_disk(ctx)?;
+            v.extend([
+                "-drive".to_owned(),
+                format!("if=none,id=stick,format=raw,file={}", disk.display()),
+                "-device".to_owned(),
+                "usb-storage,bus=xhci.0,drive=stick".to_owned(),
+            ]);
+            v
+        }
+        .iter()
+        .map(String::as_str)
+        .collect::<Vec<_>>(),
+    )?;
+    expect_all(&log, "iommu/usb-bot", &[banner])?;
+    let log = net_test(
+        ctx,
+        "virtio-net-pci,disable-legacy=on",
+        "iommu-virtio",
+        &["-device", iommu_dev],
+    )?;
+    expect_all(&log, "iommu/net", &[banner, "selftest: net tcp ok"])?;
+    Ok(())
+}
+
+fn test_iommu_vtd(ctx: &Ctx, _image: &Path) -> Result<()> {
+    iommu_suite(ctx, "intel-iommu", "Intel VT-d DMA remapping ENABLED")?;
+    println!("ok   Intel VT-d: deny-by-default DMA; edu, USB (incl. bulk) and virtio-net work; unmapped DMA is blocked and reported");
+    Ok(())
+}
+
+fn test_iommu_amd(ctx: &Ctx, _image: &Path) -> Result<()> {
+    iommu_suite(ctx, "amd-iommu", "AMD-Vi DMA remapping ENABLED")?;
+    println!("ok   AMD-Vi: deny-by-default DMA; edu, USB (incl. bulk) and virtio-net work; unmapped DMA is blocked and reported");
+    Ok(())
+}
+
 fn test_x2apic(ctx: &Ctx, _image: &Path) -> Result<()> {
     // QEMU's software emulation (TCG) has no x2APIC; this needs hardware virtualisation.
     if !Path::new("/dev/kvm").exists() {
@@ -593,7 +656,7 @@ fn test_nmi_real(ctx: &Ctx, image: &Path) -> Result<()> {
 
 /// Boots the `net` self-test with the given emulated NIC against QEMU user-mode networking and a
 /// one-shot TCP server on the host (reachable from the guest as the gateway, 10.0.2.2).
-fn net_test(ctx: &Ctx, nic: &str, tag: &str) -> Result<String> {
+fn net_test(ctx: &Ctx, nic: &str, tag: &str, machine: &[&str]) -> Result<String> {
     use std::io::{Read, Write};
     let listener = std::net::TcpListener::bind("127.0.0.1:0")?;
     let port = listener.local_addr()?.port();
@@ -620,7 +683,11 @@ fn net_test(ctx: &Ctx, nic: &str, tag: &str) -> Result<String> {
             "nettest.port={port} nettest.dns=localhost nettest.ping6=fec0::2 nettest.require_irq=1"
         ),
         "selftest: net ok",
-        &["-cpu", "max", "-netdev", "user,id=n0", "-device", &dev],
+        &[
+            machine,
+            &["-cpu", "max", "-netdev", "user,id=n0", "-device", &dev],
+        ]
+        .concat(),
     )
     .map_err(|e| format!("{tag}: {e}"))?;
     let req = server
@@ -944,8 +1011,55 @@ fn test_firmware_script(ctx: &Ctx, _image: &Path) -> Result<()> {
     Ok(())
 }
 
+/// `set-cmdline.sh` must change the command line without breaking the hash-pinned chain, and the kernel must
+/// honour `iommu=off` even when the machine has an IOMMU.
+fn test_cmdline_script(ctx: &Ctx, _image: &Path) -> Result<()> {
+    use std::process::Command;
+    let ok = |t: &str| {
+        Command::new("sh")
+            .args(["-c", &format!("command -v {t}")])
+            .output()
+            .is_ok_and(|o| o.status.success())
+    };
+    if !(ok("mcopy") && ok("b2sum")) {
+        println!("skip set-cmdline.sh test (needs mtools and b2sum)");
+        return Ok(());
+    }
+    let img = ctx.target_dir().join("ks_os-cmdline-script.img");
+    crate::write_image(ctx, "", &img)?;
+    let st = Command::new(ctx.root.join("xtask/release/set-cmdline.sh"))
+        .arg(&img)
+        .arg("iommu=off")
+        .status()?;
+    if !st.success() {
+        return Err("set-cmdline.sh failed".into());
+    }
+    let s = qemu::spawn_test_with(
+        ctx,
+        &img,
+        "t-cmdline",
+        &["-cpu", "max", "-device", "intel-iommu"],
+    )?;
+    let r = wait_for(
+        &s,
+        "iommu: disabled on the kernel command line",
+        Duration::from_secs(60),
+    );
+    let log = serial(&s);
+    drop(s);
+    let _ = std::fs::remove_file(&img);
+    r.map_err(|_| {
+        format!(
+            "the edited image did not boot with iommu=off honoured; log:\n{}",
+            plain(&log)
+        )
+    })?;
+    println!("ok   set-cmdline.sh edits the command line, keeps the boot chain valid, and iommu=off is honoured");
+    Ok(())
+}
+
 fn test_net_virtio(ctx: &Ctx, _image: &Path) -> Result<()> {
-    let log = net_test(ctx, "virtio-net-pci,disable-legacy=on", "virtio-net")?;
+    let log = net_test(ctx, "virtio-net-pci,disable-legacy=on", "virtio-net", &[])?;
     expect_all(
         &log,
         "net(virtio)",
@@ -963,7 +1077,7 @@ fn test_net_virtio(ctx: &Ctx, _image: &Path) -> Result<()> {
 }
 
 fn test_net_igb(ctx: &Ctx, _image: &Path) -> Result<()> {
-    let log = net_test(ctx, "igb", "igb")?;
+    let log = net_test(ctx, "igb", "igb", &[])?;
     expect_all(
         &log,
         "net(igb)",
@@ -985,7 +1099,7 @@ fn test_net_igb(ctx: &Ctx, _image: &Path) -> Result<()> {
 pub fn run_all(ctx: &Ctx, image: &Path) -> Result<()> {
     let mut failed = 0;
     type TestFn = fn(&Ctx, &Path) -> Result<()>;
-    let tests: [(&str, TestFn); 30] = [
+    let tests: [(&str, TestFn); 33] = [
         ("ksparse", test_ksparse_host),
         ("boot", test_boot_banner),
         ("poweroff-key", test_power_off_key),
@@ -998,6 +1112,8 @@ pub fn run_all(ctx: &Ctx, image: &Path) -> Result<()> {
         ("interrupts", test_interrupts),
         ("pci", test_pci),
         ("pci-msi", test_pci_msi),
+        ("iommu-vtd", test_iommu_vtd),
+        ("iommu-amd", test_iommu_amd),
         ("usb", test_usb_enumeration),
         ("usb-hid", test_usb_hid),
         ("firmware-modules", test_firmware_modules),
@@ -1012,6 +1128,7 @@ pub fn run_all(ctx: &Ctx, image: &Path) -> Result<()> {
         ("boot-chain", test_boot_chain_integrity),
         ("secure-boot", test_secure_boot),
         ("fw-script", test_firmware_script),
+        ("cmdline-script", test_cmdline_script),
         ("net-virtio", test_net_virtio),
         ("net-igb", test_net_igb),
         ("memory", test_memory_selftests),

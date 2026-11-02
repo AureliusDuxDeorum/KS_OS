@@ -24,10 +24,12 @@ mod heap;
 mod idt;
 mod input;
 mod ioapic;
+mod iommu;
 mod irq;
 mod klog;
 mod limine;
 pub use ksparse::madt;
+mod mmio;
 mod msi;
 mod net;
 mod paging;
@@ -165,13 +167,8 @@ extern "C" fn kmain() -> ! {
         panic!("ioapic: {e:?}");
     }
 
-    // Buses: PCI enumeration, and a note on DMA-protection hardware (IOMMU enforcement is a Gate G2 item).
+    // Bus enumeration; the IOMMU is brought up right before the first DMA-capable driver.
     pci::init(&boot);
-    for (sig, name) in [(b"DMAR", "Intel VT-d"), (b"IVRS", "AMD-Vi")] {
-        if acpi::find_table(&boot, sig).is_ok() {
-            kprintln!("iommu: {name} tables present (not enabled yet; DMA is unrestricted)");
-        }
-    }
 
     // Firmware services needed by the buttons.
     let acpi = match acpi::Acpi::init(&boot) {
@@ -217,6 +214,12 @@ extern "C" fn kmain() -> ! {
     // Everything an interrupt handler touches is ready: let interrupts in.
     arch::sti();
     kprintln!("irq: interrupts enabled");
+
+    // DMA remapping first: from here on a device can only reach memory its driver maps for it.
+    iommu::init(
+        &boot,
+        !boot.cmdline.split_whitespace().any(|t| t == "iommu=off"),
+    );
 
     // USB: xHCI controllers, hubs and HID devices.
     usb::init(&boot);

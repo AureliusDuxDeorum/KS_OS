@@ -391,6 +391,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "ksiommu"
+version = "0.3.0"
+
+[[package]]
 name = "ksnet"
 version = "0.3.0"
 dependencies = [
@@ -407,6 +411,7 @@ name = "ksparse-fuzz"
 version = "0.0.0"
 dependencies = [
  "ksbt",
+ "ksiommu",
  "ksnet",
  "ksparse",
  "libfuzzer-sys",

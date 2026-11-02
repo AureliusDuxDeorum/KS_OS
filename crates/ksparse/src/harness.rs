@@ -7,6 +7,16 @@ use crate::{efi, hid, madt, mcfg, sdt, usb};
 /// Drives every parser with the same arbitrary bytes. Used by the robustness tests and the
 /// libFuzzer targets; the contract is simply "must return".
 pub fn exercise(bytes: &[u8]) {
+    let _ = crate::iommu::parse_dmar(bytes);
+    let _ = crate::iommu::parse_ivrs(bytes);
+    // Reach the table bodies directly: force valid signatures and a minimum length onto the input.
+    for sig in [b"DMAR", b"IVRS"] {
+        let mut t = bytes.to_vec();
+        t.resize(t.len().max(48), 0);
+        t.splice(0..4, sig.iter().copied());
+        let _ = crate::iommu::parse_dmar(&t);
+        let _ = crate::iommu::parse_ivrs(&t);
+    }
     let _ = madt::parse(bytes);
     let _ = mcfg::parse(bytes);
     let _ = sdt::validate_table(bytes);

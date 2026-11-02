@@ -107,6 +107,7 @@ UI; `apic=x2` enables x2APIC; `nettest.port=N nettest.dns=NAME` parameterise the
 | Crate | Path | Role |
 |---|---|---|
 | `ksbt` | `crates/ksbt/` | KS_OS Bluetooth host stack: HCI, L2CAP, ATT/GATT, SMP (LE Secure Connections) and HID-over-GATT as pure, host-testable code. |
+| `ksiommu` | `crates/ksiommu/` | KS_OS IOMMU building blocks: I/O page tables, Intel VT-d root/context entries and AMD-Vi device-table entries as pure, host-testable code. |
 | `ksnet` | `crates/ksnet/` | KS_OS networking: NIC abstraction, igc/virtio descriptor logic and the smoltcp-based IP stack (DHCP, DNS, ICMP, TCP) as pure, host-testable code. |
 | `ksparse` | `crates/ksparse/` | Pure, bounds-checked parsers for firmware and hardware data (ACPI, PCI) shared by the KS_OS kernel and its host-side tests/fuzzers. |
 | `ksparse-fuzz` | `fuzz/` | libFuzzer targets (nightly; standalone workspace). |
@@ -164,6 +165,14 @@ KS_OS/
 │   │       ├── hw_codecs.rs — USB packet framing and the (hardware-unverified) MediaTek codec, against synthetic data
 │   │       ├── policy.rs — Pairing/connection policy: strangers only inside the pairing window, bonded first, bounded attempts, cooldown
 │   │       └── stack.rs — End-to-end tests of the Bluetooth host stack against the simulated controller and keyboard
+│   ├── ksiommu/
+│   │   ├── Cargo.toml — KS_OS IOMMU building blocks: I/O page tables, Intel VT-d root/context entries and AMD-Vi device-table…
+│   │   ├── src/
+│   │   │   ├── amd.rs — AMD-Vi device table entries (AMD IOMMU spec, section 3.2.2)
+│   │   │   ├── intel.rs — Intel VT-d translation structures (Intel VT-d spec, section 9): root entries, context entries and the table…
+│   │   │   └── lib.rs — IOMMU building blocks as pure code (ADR-0030 S-14)
+│   │   └── tests/
+│   │       └── tables.rs — I/O page tables and VT-d / AMD-Vi entry encoding against a simulated table memory
 │   ├── ksnet/
 │   │   ├── Cargo.toml — KS_OS networking: NIC abstraction, igc/virtio descriptor logic and the smoltcp-based IP stack (DHCP, DNS,…
 │   │   ├── src/
@@ -188,6 +197,7 @@ KS_OS/
 │       │   ├── efi.rs — UEFI data structures handed over by firmware: memory-map descriptors, configuration tables and the Memory…
 │       │   ├── harness.rs — Entry points shared by the host robustness tests and the fuzz targets
 │       │   ├── hid.rs — HID report-descriptor parsing and input-report interpretation (HID 1.11)
+│       │   ├── iommu.rs — ACPI tables that describe IOMMUs: Intel `DMAR` (VT-d) and AMD `IVRS` (AMD-Vi)
 │       │   ├── lib.rs — Pure, allocation-light parsers for untrusted firmware and hardware data
 │       │   ├── madt.rs — ACPI MADT (multiple APIC description table) parser
 │       │   ├── mcfg.rs — ACPI MCFG table: where PCI Express enhanced configuration (ECAM) space lives
@@ -195,6 +205,7 @@ KS_OS/
 │       │   ├── sdt.rs — ACPI system description tables: RSDP, table headers, FADT and the `\_S5` object
 │       │   └── usb.rs — USB descriptors and control-request helpers
 │       └── tests/
+│           ├── iommu_tables.rs — DMAR (Intel VT-d) and IVRS (AMD-Vi) table parsing against hand-built tables
 │           ├── parsers.rs — Unit and conformance tests of the firmware/hardware parsers against hand-built tables
 │           ├── robustness.rs — Randomised and exhaustive-mutation robustness tests: no input may panic or hang
 │           └── support.rs — Builders for valid sample tables, shared by the integration tests
@@ -270,11 +281,16 @@ KS_OS/
 │       ├── idt.rs — Interrupt Descriptor Table and CPU exception handling
 │       ├── input.rs — Unified input events and the queue USB/Bluetooth HID drivers push into
 │       ├── ioapic.rs — I/O APIC driver: routes global system interrupts (GSIs) to vectors on the boot CPU
+│       ├── iommu/
+│       │   ├── amdvi.rs — AMD-Vi (AMD I/O Virtualization Technology) IOMMU (AMD IOMMU specification, chapter 3)
+│       │   ├── mod.rs — IOMMU (DMA remapping): Intel VT-d and AMD-Vi behind one interface (ADR-0030 S-14)
+│       │   └── vtd.rs — Intel VT-d DMA remapping unit (Intel VT-d specification, chapter 10 registers)
 │       ├── irq.rs — Interrupt vector allocation and dispatch for vectors 32..=255
 │       ├── klog.rs — In-memory kernel log: a ring buffer that mirrors everything written to the serial console, so the log can be…
 │       ├── limine.rs — Minimal Limine boot protocol bindings (base revision 5)
 │       ├── log.rs — Kernel logging macros
 │       ├── main.rs — KS_OS kernel — Stage 1: boot, announce "OS operating", power off / boot to UEFI setup
+│       ├── mmio.rs — Bounds-checked volatile access to a memory-mapped register window
 │       ├── msi.rs — Message-signalled interrupt (MSI / MSI-X) message composition
 │       ├── net/
 │       │   ├── igc.rs — Intel I225/I226 (igc) driver; also drives the 82576 model that QEMU emulates as `igb` (CI)
@@ -304,7 +320,8 @@ KS_OS/
     ├── release/
     │   ├── README.txt.in
     │   ├── add-bluetooth-firmware.sh — Adds Bluetooth firmware files to a KS_OS boot image, in place
-    │   └── secure-boot.sh — UEFI Secure Boot for KS_OS with YOUR OWN keys
+    │   ├── secure-boot.sh — UEFI Secure Boot for KS_OS with YOUR OWN keys
+    │   └── set-cmdline.sh — Changes the kernel command line stored in a KS_OS boot image, in place, and keeps the hash-pinned
     ├── src/
     │   ├── bootchain.rs — Verified boot chain (ADR-0030 S-15): hash-pinning of everything Limine loads
     │   ├── disk.rs — Disk image construction: a FAT ESP wrapped in a GPT, built byte-for-byte reproducibly

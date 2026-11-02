@@ -12,6 +12,8 @@ pub struct Dma {
     pub phys: u64,
     pub virt: *mut u8,
     pub len: usize,
+    /// The PCI function whose IOMMU domain this buffer was mapped into (None: no IOMMU involved).
+    pub owner: Option<crate::pci::Address>,
 }
 
 // SAFETY: a `Dma` is a plain descriptor of RAM that the owning driver serialises access to.
@@ -28,11 +30,32 @@ impl Dma {
             phys,
             virt: (hhdm + phys) as *mut u8,
             len: frames as usize * 4096,
+            owner: None,
         })
+    }
+
+    /// Like [`Dma::alloc`], and makes the buffer reachable for `owner` (a PCI function) through the IOMMU.
+    /// With an active IOMMU every other device keeps being blocked from this memory.
+    pub fn alloc_for(
+        owner: crate::pci::Address,
+        hhdm: u64,
+        len: usize,
+        below_4g: bool,
+    ) -> Option<Self> {
+        let mut d = Self::alloc(hhdm, len, below_4g)?;
+        if !crate::iommu::map_identity(owner, d.phys, d.len as u64) {
+            d.free();
+            return None;
+        }
+        d.owner = Some(owner);
+        Some(d)
     }
 
     /// Returns the memory to the PMM. The caller guarantees the device no longer uses it.
     pub fn free(self) {
+        if let Some(o) = self.owner {
+            crate::iommu::unmap(o, self.phys, self.len as u64);
+        }
         pmm::free_contiguous(self.phys, (self.len / 4096) as u64);
     }
 

@@ -13,6 +13,7 @@ use std::path::Path;
 const README: &str = include_str!("../release/README.txt.in");
 const ADD_FIRMWARE: &str = include_str!("../release/add-bluetooth-firmware.sh");
 const SECURE_BOOT: &str = include_str!("../release/secure-boot.sh");
+const SET_CMDLINE: &str = include_str!("../release/set-cmdline.sh");
 
 fn sha256_hex(data: &[u8]) -> String {
     Sha256::digest(data).iter().fold(String::new(), |mut s, b| {
@@ -40,10 +41,15 @@ pub fn run(ctx: &Ctx) -> Result<()> {
     std::fs::write(dir.join("README.txt"), README.replace("{version}", version))?;
     std::fs::write(dir.join("add-bluetooth-firmware.sh"), ADD_FIRMWARE)?;
     std::fs::write(dir.join("secure-boot.sh"), SECURE_BOOT)?;
+    std::fs::write(dir.join("set-cmdline.sh"), SET_CMDLINE)?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        for script in ["add-bluetooth-firmware.sh", "secure-boot.sh"] {
+        for script in [
+            "add-bluetooth-firmware.sh",
+            "secure-boot.sh",
+            "set-cmdline.sh",
+        ] {
             std::fs::set_permissions(dir.join(script), std::fs::Permissions::from_mode(0o755))?;
         }
     }
@@ -61,6 +67,7 @@ pub fn run(ctx: &Ctx) -> Result<()> {
         img_name.as_str(),
         "add-bluetooth-firmware.sh",
         "secure-boot.sh",
+        "set-cmdline.sh",
         "README.txt",
         "LICENSE",
         "NOTICE",

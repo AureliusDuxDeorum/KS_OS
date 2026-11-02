@@ -167,9 +167,10 @@ impl VirtioNet {
             // Largest power of two not above both our limit and what the device offers.
             let size = 1u16 << (15 - QUEUE.min(max).leading_zeros());
             let layout = Layout::new(size);
-            let mem = Dma::alloc(boot.hhdm, layout.total, false).ok_or("out of DMA memory")?;
-            let bufs =
-                Dma::alloc(boot.hhdm, usize::from(size) * BUF, false).ok_or("out of DMA memory")?;
+            let mem = Dma::alloc_for(dev.addr, boot.hhdm, layout.total, false)
+                .ok_or("out of DMA memory")?;
+            let bufs = Dma::alloc_for(dev.addr, boot.hhdm, usize::from(size) * BUF, false)
+                .ok_or("out of DMA memory")?;
             let vq = Virtqueue::new(size, &mem);
             common.w16(v::CC_QUEUE_SIZE, size);
             common.w64(v::CC_QUEUE_DESC, mem.phys + layout.desc as u64);
