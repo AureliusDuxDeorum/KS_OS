@@ -34,6 +34,19 @@ fn rdrand64() -> Option<u64> {
     (core::arch::x86_64::_rdrand64_step(&mut v) == 1).then_some(v)
 }
 
+/// A seed for *non-cryptographic* uses (TCP sequence numbers, ephemeral ports). Uses the hardware
+/// RNG when present; otherwise mixes the TSC and the given entropy-ish words (never used for keys).
+pub fn network_seed(extra: u64) -> (u64, bool) {
+    if available() {
+        return (next_u64(), true);
+    }
+    let mut x = arch::rdtsc() ^ extra.rotate_left(32) ^ crate::time::now_ns().rotate_left(17);
+    // SplitMix64 finaliser.
+    x = (x ^ (x >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    x = (x ^ (x >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+    (x ^ (x >> 31), false)
+}
+
 fn next_u64() -> u64 {
     for _ in 0..1000 {
         if has_rdseed() {

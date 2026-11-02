@@ -591,10 +591,84 @@ fn test_nmi_real(ctx: &Ctx, image: &Path) -> Result<()> {
     Ok(())
 }
 
+/// Boots the `net` self-test with the given emulated NIC against QEMU user-mode networking and a
+/// one-shot TCP server on the host (reachable from the guest as the gateway, 10.0.2.2).
+fn net_test(ctx: &Ctx, nic: &str, tag: &str) -> Result<String> {
+    use std::io::{Read, Write};
+    let listener = std::net::TcpListener::bind("127.0.0.1:0")?;
+    let port = listener.local_addr()?.port();
+    let server = std::thread::spawn(move || -> std::io::Result<Vec<u8>> {
+        let (mut c, _) = listener.accept()?;
+        c.set_read_timeout(Some(Duration::from_secs(30)))?;
+        let mut req = Vec::new();
+        let mut b = [0u8; 64];
+        while !req.ends_with(b"\n") {
+            let n = c.read(&mut b)?;
+            if n == 0 {
+                break;
+            }
+            req.extend_from_slice(&b[..n]);
+        }
+        c.write_all(b"KS-NET-PONG\n")?;
+        Ok(req)
+    });
+    let dev = format!("{nic},netdev=n0");
+    let log = selftest_log_full(
+        ctx,
+        "net",
+        &format!("nettest.port={port} nettest.dns=localhost"),
+        "selftest: net ok",
+        &["-cpu", "max", "-netdev", "user,id=n0", "-device", &dev],
+    )
+    .map_err(|e| format!("{tag}: {e}"))?;
+    let req = server
+        .join()
+        .map_err(|_| "tcp server thread panicked")?
+        .map_err(|e| format!("{tag}: host TCP server: {e}"))?;
+    if req != b"KS-NET-PING\n" {
+        return Err(format!("{tag}: server received {req:?}").into());
+    }
+    Ok(log)
+}
+
+fn test_net_virtio(ctx: &Ctx, _image: &Path) -> Result<()> {
+    let log = net_test(ctx, "virtio-net-pci,disable-legacy=on", "virtio-net")?;
+    expect_all(
+        &log,
+        "net(virtio)",
+        &[
+            "net: virtio-net ready",
+            "selftest: net lease 10.0.2.15/24 gateway 10.0.2.2",
+            "selftest: net icmp ok",
+            "selftest: net tcp ok",
+        ],
+    )?;
+    println!("ok   virtio-net: DHCP lease, ICMP echo, DNS and a TCP round trip with a host server");
+    Ok(())
+}
+
+fn test_net_igb(ctx: &Ctx, _image: &Path) -> Result<()> {
+    let log = net_test(ctx, "igb", "igb")?;
+    expect_all(
+        &log,
+        "net(igb)",
+        &[
+            "Intel 82576 (igb) ready",
+            "selftest: net lease 10.0.2.15/24 gateway 10.0.2.2",
+            "selftest: net icmp ok",
+            "selftest: net tcp ok",
+        ],
+    )?;
+    println!(
+        "ok   Intel igb/igc driver path (QEMU igb): DHCP lease, ICMP echo and a TCP round trip"
+    );
+    Ok(())
+}
+
 pub fn run_all(ctx: &Ctx, image: &Path) -> Result<()> {
     let mut failed = 0;
     type TestFn = fn(&Ctx, &Path) -> Result<()>;
-    let tests: [(&str, TestFn); 23] = [
+    let tests: [(&str, TestFn); 25] = [
         ("ksparse", test_ksparse_host),
         ("boot", test_boot_banner),
         ("poweroff-key", test_power_off_key),
@@ -616,10 +690,17 @@ pub fn run_all(ctx: &Ctx, image: &Path) -> Result<()> {
         ("usb-bulk", test_usb_bulk),
         ("x2apic", test_x2apic),
         ("nmi-real", test_nmi_real),
+        ("net-virtio", test_net_virtio),
+        ("net-igb", test_net_igb),
         ("memory", test_memory_selftests),
         ("memory-violations", test_memory_violations),
     ];
+    // `KS_TEST=net cargo xtask test` runs only the tests whose name contains the filter.
+    let filter = std::env::var("KS_TEST").unwrap_or_default();
     for (name, t) in tests {
+        if !name.contains(&filter) {
+            continue;
+        }
         if let Err(e) = t(ctx, image) {
             eprintln!("FAIL {name}: {e}");
             failed += 1;

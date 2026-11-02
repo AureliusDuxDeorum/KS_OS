@@ -29,6 +29,7 @@ mod klog;
 mod limine;
 pub use ksparse::madt;
 mod msi;
+mod net;
 mod paging;
 mod pci;
 mod pmm;
@@ -213,6 +214,8 @@ extern "C" fn kmain() -> ! {
     usb::init(&boot);
     // Bluetooth controllers are USB devices: bring them up now that USB is enumerated.
     bt::init(&boot, efi.as_ref());
+    // Network adapters (PCI): Ethernet NIC driver and the IP stack.
+    net::init(&boot);
     for m in boot.modules() {
         kprintln!("boot: module {} ({} bytes)", m.name(), m.data.len());
     }

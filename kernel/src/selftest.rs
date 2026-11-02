@@ -71,6 +71,7 @@ pub fn run(name: &str, boot: &BootInfo) {
         "usb" => test_usb(),
         "usb-hid" => test_usb_hid(),
         "usb-bot" => test_usb_bot(),
+        "net" => test_net(boot),
         "pci" => test_pci(),
         "pci-edu" => test_pci_edu(boot),
         "pci-msix" => test_pci_msix(boot),
@@ -817,4 +818,109 @@ fn test_rng() {
         "bit balance is within 45-55 %",
     );
     kprintln!("selftest: rng ok");
+}
+
+/// End-to-end network test against QEMU user-mode networking (or any DHCP network):
+/// DHCP lease, ICMP echo to the gateway, optional DNS lookup, and a TCP request/response with a
+/// host-side server at `<gateway>:nettest.port`.
+fn test_net(boot: &BootInfo) {
+    use ksnet::stack::{PingResult, TcpState};
+    let arg = |key: &str| {
+        boot.cmdline
+            .split_whitespace()
+            .find_map(|t| t.strip_prefix(key))
+    };
+    // Spins the stack until `done` returns Some, or fails after `timeout_ms`.
+    fn until<T>(what: &str, timeout_ms: u64, mut done: impl FnMut() -> Option<T>) -> T {
+        let t0 = time::now_ns();
+        loop {
+            crate::net::service();
+            if let Some(v) = done() {
+                check(true, what);
+                return v;
+            }
+            if time::now_ns() - t0 > timeout_ms * 1_000_000 {
+                check(false, what);
+            }
+            time::sleep_ms(1);
+        }
+    }
+
+    check(
+        crate::net::present(),
+        "a supported network adapter was found",
+    );
+    let lease = until("a DHCP lease was obtained", 20_000, || {
+        crate::net::with(|s, _| s.lease().cloned()).flatten()
+    });
+    let gw = lease.router.unwrap_or_else(|| {
+        check(false, "the lease contains a gateway");
+        unreachable!()
+    });
+    kprintln!(
+        "selftest: net lease {} gateway {gw} dns {:?}",
+        lease.address,
+        lease.dns
+    );
+
+    // ICMP echo to the gateway.
+    let mut seq = 100u16;
+    let t_ping = time::now_ns();
+    let _ = crate::net::with(|s, _| s.ping(gw, seq));
+    until("the gateway answered an echo request", 10_000, || {
+        if time::now_ns() - t_ping > 2_000_000_000 * u64::from(seq - 99) {
+            seq += 1;
+            let _ = crate::net::with(|s, _| s.ping(gw, seq));
+        }
+        match crate::net::with(|s, _| s.ping_result()) {
+            Some(PingResult::Reply { .. }) => Some(()),
+            _ => None,
+        }
+    });
+    kprintln!("selftest: net icmp ok");
+
+    // DNS (the name is chosen by the test harness; QEMU forwards it to the host resolver).
+    if let Some(name) = arg("nettest.dns=") {
+        let _ = crate::net::with(|s, _| s.resolve(name));
+        let r = until("the DNS query completed", 15_000, || {
+            crate::net::with(|s, _| s.resolve_result()).flatten()
+        });
+        match r {
+            Ok(a) => kprintln!("selftest: net dns ok {name} -> {a}"),
+            Err(()) => kprintln!("selftest: net dns failed {name}"),
+        }
+    }
+
+    // TCP request/response.
+    if let Some(port) = arg("nettest.port=").and_then(|p| p.parse::<u16>().ok()) {
+        let id = crate::net::with(|s, _| s.tcp_connect(gw, port))
+            .and_then(Result::ok)
+            .unwrap_or_else(|| {
+                check(false, "a TCP connection could be started");
+                unreachable!()
+            });
+        until("the TCP connection was established", 15_000, || {
+            (crate::net::with(|s, _| s.tcp_state(id)) == Some(TcpState::Established)).then_some(())
+        });
+        let req = b"KS-NET-PING\n";
+        let mut sent = 0;
+        let mut got = alloc::vec::Vec::new();
+        until("the server's reply arrived", 15_000, || {
+            crate::net::with(|s, _| {
+                if sent < req.len() {
+                    sent += s.tcp_send(id, &req[sent..]);
+                }
+                let mut b = [0u8; 256];
+                let n = s.tcp_recv(id, &mut b);
+                got.extend_from_slice(&b[..n]);
+            });
+            got.windows(11).any(|w| w == b"KS-NET-PONG").then_some(())
+        });
+        let _ = crate::net::with(|s, _| {
+            s.tcp_close(id);
+            s.tcp_release(id);
+        });
+        kprintln!("selftest: net tcp ok");
+    }
+    kprintln!("selftest: net ok");
 }

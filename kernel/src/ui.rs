@@ -402,7 +402,11 @@ impl Ui {
                 }
                 // Bluetooth work happens in short slices while the UI is idle.
                 crate::bt::service();
+                crate::net::service();
                 if let Some(s) = crate::bt::take_status() {
+                    self.set_status(&s, Level::Info);
+                }
+                if let Some(s) = crate::net::take_status() {
                     self.set_status(&s, Level::Info);
                 }
                 // Sleep until the next interrupt (input or the 1 kHz tick).
