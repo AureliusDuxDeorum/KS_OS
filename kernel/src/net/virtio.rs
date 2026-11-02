@@ -3,7 +3,7 @@
 //!
 //! Spec: OASIS Virtual I/O Device (VIRTIO) 1.2, sections 4.1 (PCI) and 5.1 (network device).
 
-use super::Mmio;
+use super::{Mmio, NET_IRQS};
 use crate::boot::BootInfo;
 use crate::dma::Dma;
 use crate::pci::{self, Device};
@@ -39,6 +39,7 @@ pub struct VirtioNet {
     has_status: bool,
     rx: Queue,
     tx: Queue,
+    irq: bool,
 }
 
 fn wait(timeout_ms: u64, mut cond: impl FnMut() -> bool) -> bool {
@@ -202,11 +203,46 @@ impl VirtioNet {
             has_status,
             rx,
             tx,
+            irq: false,
         };
+        this.setup_interrupts(boot, dev);
         this.refill_rx();
         this.common
             .w8(v::CC_DEVICE_STATUS, st | v::STATUS_DRIVER_OK);
         Ok(this)
+    }
+
+    /// MSI-X (or MSI) with a single vector for configuration changes and both queues; polled otherwise.
+    fn setup_interrupts(&mut self, boot: &BootInfo, dev: &Device) {
+        let Some(vector) = crate::irq::alloc_vector() else {
+            return;
+        };
+        match pci::enable_msi(boot, dev, vector, crate::apic::id()) {
+            Ok(kind) => {
+                crate::irq::register(vector, irq_handler);
+                let c = self.common;
+                c.w16(v::CC_MSIX_CONFIG, 0);
+                let mut ok = c.r16(v::CC_MSIX_CONFIG) != v::NO_VECTOR;
+                for q in 0..2u16 {
+                    c.w16(v::CC_QUEUE_SELECT, q);
+                    c.w16(v::CC_QUEUE_MSIX_VECTOR, 0);
+                    ok &= c.r16(v::CC_QUEUE_MSIX_VECTOR) != v::NO_VECTOR;
+                }
+                self.irq = ok;
+                if ok {
+                    kprintln!("net: virtio-net interrupts via {kind}, vector {vector:#x}");
+                } else {
+                    kprintln!("net: virtio-net: device refused the MSI-X vectors; polled mode");
+                }
+            }
+            Err(e) => kprintln!("net: virtio-net: no MSI/MSI-X ({e:?}); polled mode"),
+        }
+    }
+
+    pub fn rearm_irq(&mut self) {}
+
+    pub fn irq_enabled(&self) -> bool {
+        self.irq
     }
 
     fn notify(&self, queue_index: u16, offset: usize) {
@@ -304,4 +340,8 @@ impl VirtioNet {
             None => false,
         }
     }
+}
+
+fn irq_handler(_frame: &mut crate::idt::TrapFrame) {
+    NET_IRQS.fetch_add(1, core::sync::atomic::Ordering::Release);
 }

@@ -616,7 +616,9 @@ fn net_test(ctx: &Ctx, nic: &str, tag: &str) -> Result<String> {
     let log = selftest_log_full(
         ctx,
         "net",
-        &format!("nettest.port={port} nettest.dns=localhost"),
+        &format!(
+            "nettest.port={port} nettest.dns=localhost nettest.ping6=fec0::2 nettest.require_irq=1"
+        ),
         "selftest: net ok",
         &["-cpu", "max", "-netdev", "user,id=n0", "-device", &dev],
     )
@@ -656,10 +658,12 @@ fn test_net_virtio(ctx: &Ctx, _image: &Path) -> Result<()> {
             "net: virtio-net ready",
             "selftest: net lease 10.0.2.15/24 gateway 10.0.2.2",
             "selftest: net icmp ok",
+            "selftest: net icmp6 ok",
             "selftest: net tcp ok",
+            "selftest: net interrupts=",
         ],
     )?;
-    println!("ok   virtio-net: DHCP lease, ICMP echo, DNS and a TCP round trip with a host server");
+    println!("ok   virtio-net: MSI-X interrupts, DHCP, SLAAC IPv6, ICMP/ICMPv6 echo, TCP round trip, ingress filter");
     Ok(())
 }
 
@@ -672,7 +676,9 @@ fn test_net_igb(ctx: &Ctx, _image: &Path) -> Result<()> {
             "Intel 82576 (igb) ready",
             "selftest: net lease 10.0.2.15/24 gateway 10.0.2.2",
             "selftest: net icmp ok",
+            "selftest: net icmp6 ok",
             "selftest: net tcp ok",
+            "selftest: net interrupts=",
         ],
     )?;
     println!(

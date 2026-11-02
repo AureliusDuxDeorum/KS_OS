@@ -70,6 +70,8 @@ Plug the LAN cable in **before** powering on. Look for these `net:` lines on the
   switches to `link up` within a few seconds.
 - `net: phy BMCR=… BMSR=…` — the PHY state; `net: phy not reachable over MDIO` would be a bug to report.
 - `net: …: 192.168.x.y/24 gateway … dns …` — DHCP worked.
+- `net: … interrupts via MSI-X, vector …` — receive is interrupt-driven (`polled mode` means MSI-X failed; still works).
+- `net: …: IPv6 address …` — SLAAC worked (needs an IPv6-capable router; absence is not an error).
 - `net: …: gateway … reachable (N ms)` — ICMP echo to the router worked: the whole path
   (NIC → stack → router) is verified. `does not answer ping` means the router ignores ping (not necessarily a fault).
 If the NIC is not listed at all, send the `pci:` line containing `8086:15f3`.

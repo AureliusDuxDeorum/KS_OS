@@ -14,9 +14,13 @@ use crate::sync::IrqMutex;
 use crate::{rng, time};
 use alloc::format;
 use alloc::string::String;
+use core::sync::atomic::{AtomicU32, Ordering};
 use ksnet::dma::DmaMem;
 use ksnet::stack::PingResult;
 use ksnet::{Mac, Nic, Stack};
+
+/// Interrupts delivered by the NIC (handlers only count; `service()` does the work).
+pub static NET_IRQS: AtomicU32 = AtomicU32::new(0);
 
 /// Volatile access to a DMA buffer for the ring logic in `ksnet`.
 impl DmaMem for Dma {
@@ -111,6 +115,18 @@ impl Driver {
             Driver::Virtio(d) => d.describe_link(),
         }
     }
+    pub fn irq_enabled(&self) -> bool {
+        match self {
+            Driver::Igc(d) => d.irq_enabled(),
+            Driver::Virtio(d) => d.irq_enabled(),
+        }
+    }
+    pub fn rearm_irq(&mut self) {
+        match self {
+            Driver::Igc(d) => d.rearm_irq(),
+            Driver::Virtio(d) => d.rearm_irq(),
+        }
+    }
 }
 
 impl Nic for Driver {
@@ -159,6 +175,10 @@ struct Net {
     phase: Phase,
     ping_sent_at: u64,
     started: u64,
+    last_poll: i64,
+    last_irqs: u32,
+    more: bool,
+    v6_reported: bool,
 }
 
 static NET: IrqMutex<Option<Net>> = IrqMutex::new(None);
@@ -187,7 +207,8 @@ pub fn init(boot: &BootInfo) {
     for dev in crate::pci::devices() {
         if igc::supports(dev) {
             match igc::Igc::new(boot, dev) {
-                Ok(d) => {
+                Ok(mut d) => {
+                    d.enable_interrupts(boot, dev);
                     driver = Some(Driver::Igc(d));
                     break;
                 }
@@ -233,6 +254,10 @@ pub fn init(boot: &BootInfo) {
         phase: Phase::Configuring,
         ping_sent_at: 0,
         started: now as u64,
+        last_poll: now,
+        last_irqs: 0,
+        more: false,
+        v6_reported: false,
     });
 }
 
@@ -245,7 +270,21 @@ pub fn service() {
     let Some(mut g) = NET.try_lock() else { return };
     let Some(n) = g.as_mut() else { return };
     let now = now_ms();
-    n.stack.poll(now);
+    // Interrupt-driven receive: poll when the NIC signalled, when the previous pass ran out of
+    // budget, or at least every 10 ms (protocol timers, and a safety net if an interrupt is lost).
+    let irqs = NET_IRQS.load(Ordering::Acquire);
+    let signalled = irqs != n.last_irqs;
+    let irq_mode = n.stack.nic().irq_enabled();
+    if !(signalled || n.more || !irq_mode || now - n.last_poll >= 10) {
+        return;
+    }
+    n.last_irqs = irqs;
+    n.last_poll = now;
+    n.more = n.stack.poll(now);
+    n.stack.nic().rearm_irq();
+    if n.more {
+        return; // the budget ran out: yield to the UI now, continue on the next pass
+    }
 
     let link = n.stack.nic().link_up();
     if n.last_link != Some(link) {
@@ -263,6 +302,12 @@ pub fn service() {
         }
     }
 
+    if !n.v6_reported {
+        if let Some(a) = n.stack.global_ipv6() {
+            n.v6_reported = true;
+            set_status(format!("{}: IPv6 address {a}", n.name));
+        }
+    }
     let (name, started) = (n.name, n.started);
     match n.phase {
         Phase::Configuring => {
@@ -296,13 +341,20 @@ pub fn service() {
                 match gw {
                     Some(gw) if sent < 5 => {
                         n.ping_sent_at = time::now_ns() / 1_000_000;
-                        let _ = n.stack.ping(gw, u16::from(sent));
+                        if let Err(e) = n.stack.ping(gw, u16::from(sent)) {
+                            kprintln!("net: ping {gw} could not be queued: {e:?}");
+                        }
                         n.phase = Phase::Checking {
                             sent: sent + 1,
                             next_at: now as u64 + 1_000,
                         };
                     }
                     Some(gw) => {
+                        let st = n.stack.filter_stats();
+                        kprintln!(
+                            "net: ingress filter: {} passed, {} dropped (last drop: {:?}), {} echo replies sent",
+                            st.passed, st.dropped, st.last_drop, st.echo_replies
+                        );
                         set_status(format!("{name}: gateway {gw} does not answer ping"));
                         n.phase = Phase::Done;
                     }
@@ -323,6 +375,13 @@ pub fn with<R>(f: impl FnOnce(&mut Stack<Driver>, i64) -> R) -> Option<R> {
     let mut g = NET.lock();
     let n = g.as_mut()?;
     Some(f(&mut n.stack, now_ms()))
+}
+
+/// Number of NIC interrupts delivered so far, and whether the NIC runs interrupt-driven.
+pub fn irq_status() -> (u32, bool) {
+    let mut g = NET.lock();
+    let mode = g.as_mut().is_some_and(|n| n.stack.nic().irq_enabled());
+    (NET_IRQS.load(Ordering::Acquire), mode)
 }
 
 /// Whether a NIC driver is running.

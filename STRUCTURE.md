@@ -168,6 +168,7 @@ KS_OS/
 │   │   ├── Cargo.toml — KS_OS networking: NIC abstraction, igc/virtio descriptor logic and the smoltcp-based IP stack (DHCP, DNS,…
 │   │   ├── src/
 │   │   │   ├── dma.rs — Access to device-shared memory (descriptor rings, packet buffers)
+│   │   │   ├── filter.rs — Ingress packet filter (ADR-0030 S-17)
 │   │   │   ├── harness.rs — Fuzz/robustness entry point: a hostile network and a hostile device
 │   │   │   ├── igc.rs — Intel igc (I225/I226 2.5GbE) and igb (82576, the QEMU test model) definitions and ring logic
 │   │   │   ├── lib.rs — KS_OS networking as pure, host-testable code
@@ -177,6 +178,7 @@ KS_OS/
 │   │   └── tests/
 │   │       ├── common/
 │   │       │   └── mod.rs — Simulation helpers: DMA memory model, an Ethernet "wire", and a scripted DHCP/DNS server
+│   │       ├── filter.rs — Ingress filter rules: default-deny, stealth for closed ports, no spoofed/martian/fragmented traffic
 │   │       ├── rings.rs — igc descriptor-ring and virtqueue logic against simulated devices that behave like the hardware
 │   │       └── stack.rs — End-to-end tests of the IP stack (DHCP, ping, DNS, TCP with packet loss, link loss) against a scripted server
 │   └── ksparse/

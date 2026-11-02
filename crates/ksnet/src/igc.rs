@@ -44,6 +44,14 @@ pub const TIPG: usize = 0x0410;
 pub const MDIC: usize = 0x0020;
 pub const ICR: usize = 0x1500;
 pub const IMS: usize = 0x1508;
+pub const GPIE: usize = 0x1514;
+pub const EIMS: usize = 0x1524;
+pub const EIMC: usize = 0x1528;
+pub const EIAC: usize = 0x152C;
+pub const EIAM: usize = 0x1530;
+pub const EICR: usize = 0x1580;
+pub const IVAR0: usize = 0x1700;
+pub const IVAR_MISC: usize = 0x1740;
 pub const IMC: usize = 0x150C;
 pub const RXCSUM: usize = 0x5000;
 pub const MTA: usize = 0x5200;
@@ -64,6 +72,13 @@ pub const TDT0: usize = 0xE018;
 pub const TXDCTL0: usize = 0xE028;
 
 // ---- bits ----
+pub const GPIE_NSICR: u32 = 1 << 0;
+pub const GPIE_MSIX_MODE: u32 = 1 << 4;
+pub const GPIE_EIAME: u32 = 1 << 30;
+pub const GPIE_PBA: u32 = 1 << 31;
+pub const IVAR_VALID: u32 = 1 << 7;
+/// Link-status-change cause in the legacy interrupt registers.
+pub const ICR_LSC: u32 = 1 << 2;
 pub const CTRL_FD: u32 = 1 << 0;
 pub const CTRL_ASDE: u32 = 1 << 5;
 pub const CTRL_SLU: u32 = 1 << 6;

@@ -854,6 +854,12 @@ fn test_net(boot: &BootInfo) {
                 return v;
             }
             if time::now_ns() - t0 > timeout_ms * 1_000_000 {
+                if let Some(st) = crate::net::with(|s, _| s.filter_stats()) {
+                    kprintln!("selftest: filter stats {st:?}");
+                    if let Some(a) = crate::net::with(|s, _| s.ipv6_addresses()) {
+                        kprintln!("selftest: ipv6 addresses {a:?}");
+                    }
+                }
                 check(false, what);
             }
             time::sleep_ms(1);
@@ -892,6 +898,33 @@ fn test_net(boot: &BootInfo) {
         }
     });
     kprintln!("selftest: net icmp ok");
+
+    // IPv6: stateless autoconfiguration from the router advertisement, then an echo to the gateway.
+    if let Some(target) = arg("nettest.ping6=").and_then(|a| a.parse::<core::net::Ipv6Addr>().ok())
+    {
+        let t_slaac = time::now_ns();
+        let addr = until("an IPv6 address was configured (SLAAC)", 60_000, || {
+            crate::net::with(|s, _| s.global_ipv6()).flatten()
+        });
+        kprintln!(
+            "selftest: net ipv6 address {addr} after {} ms",
+            (time::now_ns() - t_slaac) / 1_000_000
+        );
+        let mut seq = 200u16;
+        let t6 = time::now_ns();
+        let _ = crate::net::with(|s, _| s.ping6(target, seq));
+        until("the IPv6 gateway answered an echo request", 10_000, || {
+            if time::now_ns() - t6 > 2_000_000_000 * u64::from(seq - 199) {
+                seq += 1;
+                let _ = crate::net::with(|s, _| s.ping6(target, seq));
+            }
+            match crate::net::with(|s, _| s.ping_result()) {
+                Some(PingResult::Reply6 { .. }) => Some(()),
+                _ => None,
+            }
+        });
+        kprintln!("selftest: net icmp6 ok");
+    }
 
     // DNS (the name is chosen by the test harness; QEMU forwards it to the host resolver).
     if let Some(name) = arg("nettest.dns=") {
@@ -935,6 +968,11 @@ fn test_net(boot: &BootInfo) {
             s.tcp_release(id);
         });
         kprintln!("selftest: net tcp ok");
+    }
+    let (irqs, irq_mode) = crate::net::irq_status();
+    kprintln!("selftest: net interrupts={irqs} interrupt_mode={irq_mode}");
+    if arg("nettest.require_irq=").is_some() {
+        check(irq_mode && irqs > 0, "the NIC delivered receive interrupts");
     }
     kprintln!("selftest: net ok");
 }

@@ -5,7 +5,7 @@
 //! datasheets and the mainline Linux `igc` driver; descriptor/ring logic is in `ksnet::igc` and
 //! unit-tested on the host.
 
-use super::Mmio;
+use super::{Mmio, NET_IRQS};
 use crate::boot::BootInfo;
 use crate::dma::Dma;
 use crate::pci::{self, Device};
@@ -36,6 +36,7 @@ pub struct Igc {
     tx_bufs: Dma,
     frames_rx: u64,
     frames_tx: u64,
+    irq: bool,
 }
 
 fn wait(timeout_ms: u64, mut cond: impl FnMut() -> bool) -> bool {
@@ -160,7 +161,12 @@ impl Igc {
             return Err("RX queue did not enable".into());
         }
         regs.w32(hw::RDT0, u32::from(rx_tail));
-        regs.w32(hw::RCTL, hw::RCTL_EN | hw::RCTL_BAM | hw::RCTL_SECRC);
+        // Multicast promiscuous: IPv6 neighbour discovery needs the all-nodes and solicited-node groups;
+        // the ingress filter (ksnet::filter) discards every group that is not ours.
+        regs.w32(
+            hw::RCTL,
+            hw::RCTL_EN | hw::RCTL_BAM | hw::RCTL_MPE | hw::RCTL_SECRC,
+        );
 
         regs.w64(hw::TDBAL0, tx_desc.phys);
         regs.w32(hw::TDLEN0, RxQueue::ring_bytes(RING) as u32);
@@ -188,7 +194,55 @@ impl Igc {
             tx_bufs,
             frames_rx: 0,
             frames_tx: 0,
+            irq: false,
         })
+    }
+
+    /// Switches to interrupt-driven receive: one MSI-X vector for queue 0 and link changes.
+    /// Returns false (and stays in polled mode) if MSI/MSI-X cannot be set up.
+    pub fn enable_interrupts(&mut self, boot: &BootInfo, dev: &Device) -> bool {
+        let Some(vector) = crate::irq::alloc_vector() else {
+            return false;
+        };
+        crate::irq::register(vector, irq_handler);
+        match pci::enable_msi(boot, dev, vector, crate::apic::id()) {
+            Ok(kind) => kprintln!(
+                "net: {} interrupts via {kind}, vector {vector:#x}",
+                self.name()
+            ),
+            Err(e) => {
+                kprintln!("net: no MSI/MSI-X ({e:?}); staying in polled mode");
+                return false;
+            }
+        }
+        let r = self.regs;
+        r.w32(hw::IMC, !0);
+        r.w32(hw::EIMC, !0);
+        r.w32(
+            hw::GPIE,
+            hw::GPIE_MSIX_MODE | hw::GPIE_EIAME | hw::GPIE_PBA | hw::GPIE_NSICR,
+        );
+        // Queue 0 RX and TX and the "other" causes (link change) all use MSI-X entry 0.
+        r.w32(hw::IVAR0, (hw::IVAR_VALID) | (hw::IVAR_VALID << 8));
+        r.w32(hw::IVAR_MISC, hw::IVAR_VALID << 8);
+        r.w32(hw::EIAC, 1);
+        r.w32(hw::EIAM, 1);
+        r.w32(hw::IMS, hw::ICR_LSC);
+        r.w32(hw::EIMS, 1);
+        let _ = r.r32(hw::STATUS);
+        self.irq = true;
+        true
+    }
+
+    pub fn irq_enabled(&self) -> bool {
+        self.irq
+    }
+
+    /// Re-enables the interrupt after the driver has drained the queues (it auto-masks on delivery).
+    pub fn rearm_irq(&mut self) {
+        if self.irq {
+            self.regs.w32(hw::EIMS, 1);
+        }
     }
 
     pub fn name(&self) -> &'static str {
@@ -247,4 +301,10 @@ impl Igc {
             None => false,
         }
     }
+}
+
+fn irq_handler(_frame: &mut crate::idt::TrapFrame) {
+    // Only record that work is pending; the device auto-masked itself (EIAME), and `service()`
+    // re-arms it after draining the rings with a bounded budget.
+    NET_IRQS.fetch_add(1, core::sync::atomic::Ordering::Release);
 }

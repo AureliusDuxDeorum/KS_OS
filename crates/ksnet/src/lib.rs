@@ -32,11 +32,12 @@
 extern crate alloc;
 
 pub mod dma;
+pub mod filter;
 pub mod harness;
 pub mod igc;
 pub mod nic;
 pub mod stack;
 pub mod virtio;
 
-pub use nic::{Mac, Nic, NicDevice};
+pub use nic::{Mac, Nic, NicDevice, Stats};
 pub use stack::{Lease, PingResult, Stack, TcpId, TcpState};

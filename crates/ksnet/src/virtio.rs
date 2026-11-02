@@ -38,7 +38,11 @@ pub const CC_DEVICE_FEATURE_SELECT: usize = 0x00;
 pub const CC_DEVICE_FEATURE: usize = 0x04;
 pub const CC_DRIVER_FEATURE_SELECT: usize = 0x08;
 pub const CC_DRIVER_FEATURE: usize = 0x0C;
+pub const CC_MSIX_CONFIG: usize = 0x10;
 pub const CC_DEVICE_STATUS: usize = 0x14;
+pub const CC_QUEUE_MSIX_VECTOR: usize = 0x1A;
+/// "No vector" marker for the MSI-X vector fields.
+pub const NO_VECTOR: u16 = 0xFFFF;
 pub const CC_QUEUE_SELECT: usize = 0x16;
 pub const CC_QUEUE_SIZE: usize = 0x18;
 pub const CC_QUEUE_ENABLE: usize = 0x1C;

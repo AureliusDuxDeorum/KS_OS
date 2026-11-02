@@ -11,12 +11,14 @@ use smoltcp::iface::{Config, Interface, SocketHandle, SocketSet};
 use smoltcp::socket::{dhcpv4, dns, icmp, tcp};
 use smoltcp::time::Instant;
 use smoltcp::wire::{
-    DnsQueryType, EthernetAddress, HardwareAddress, Icmpv4Packet, Icmpv4Repr, IpAddress, IpCidr,
-    IpEndpoint, Ipv4Address, Ipv4Cidr,
+    DnsQueryType, EthernetAddress, HardwareAddress, Icmpv4Packet, Icmpv4Repr, Icmpv6Packet,
+    Icmpv6Repr, IpAddress, IpCidr, IpEndpoint, Ipv4Address, Ipv4Cidr, Ipv6Address, Ipv6Cidr,
 };
 
 const TCP_BUF: usize = 32 * 1024;
 const MAX_TCP: usize = 8;
+/// Frames processed per `poll` call.
+pub const RX_BUDGET: u32 = 64;
 
 /// The address configuration obtained from DHCP (or set statically).
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -32,6 +34,8 @@ pub enum PingResult {
     Pending,
     /// Echo reply received for this sequence number.
     Reply { seq: u16, from: Ipv4Address },
+    /// Echo reply received over IPv6.
+    Reply6 { seq: u16, from: Ipv6Address },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -70,6 +74,25 @@ pub struct Stack<N: Nic> {
     last_link: bool,
 }
 
+/// Opaque 64-bit interface identifier derived from the per-boot seed (SplitMix64 finaliser).
+fn link_local_iid(seed: u64, mac: &Mac) -> [u8; 8] {
+    let m = mac.iter().fold(0u64, |a, b| (a << 8) | u64::from(*b));
+    let mut x = seed ^ m.rotate_left(24) ^ 0x9E37_79B9_7F4A_7C15;
+    x = (x ^ (x >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    x = (x ^ (x >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+    let mut iid = (x ^ (x >> 31)).to_be_bytes();
+    if let Some(b) = iid.first_mut() {
+        *b &= !0x02; // universal/local bit: locally administered
+        *b &= !0x01; // unicast
+    }
+    iid
+}
+
+/// fe80::/10 (note that fec0::/10, the old site-local range, is *not* link-local).
+fn is_link_local(a: &[u8; 16]) -> bool {
+    a[0] == 0xFE && a[1] & 0xC0 == 0x80
+}
+
 fn instant(now_ms: i64) -> Instant {
     Instant::from_millis(now_ms)
 }
@@ -81,7 +104,18 @@ impl<N: Nic> Stack<N> {
         let mut dev = NicDevice::new(nic);
         let mut cfg = Config::new(HardwareAddress::Ethernet(EthernetAddress(mac)));
         cfg.random_seed = seed;
-        let iface = Interface::new(cfg, &mut dev, instant(now_ms));
+        cfg.slaac = true; // IPv6 stateless autoconfiguration (all inbound traffic still goes through the filter)
+        let mut iface = Interface::new(cfg, &mut dev, instant(now_ms));
+        // smoltcp expects us to configure the IPv6 link-local address. The interface identifier is
+        // an opaque per-boot value (not the MAC), so the address does not reveal the hardware.
+        let iid = link_local_iid(seed, &mac);
+        let mut ll = [0u8; 16];
+        ll[0] = 0xFE;
+        ll[1] = 0x80;
+        ll[8..].copy_from_slice(&iid);
+        iface.update_ip_addrs(|a| {
+            let _ = a.push(IpCidr::Ipv6(Ipv6Cidr::new(Ipv6Address::from(ll), 64)));
+        });
         let mut sockets = SocketSet::new(Vec::new());
         let dhcp = sockets.add(dhcpv4::Socket::new());
         let dns = sockets.add(dns::Socket::new(&[], vec![None, None, None, None]));
@@ -118,7 +152,11 @@ impl<N: Nic> Stack<N> {
     }
 
     /// Drives the stack: receives frames, runs timers, transmits. Call at least every few ms.
-    pub fn poll(&mut self, now_ms: i64) {
+    /// Returns `true` if the receive budget ran out (more frames may be waiting: poll again soon).
+    pub fn poll(&mut self, now_ms: i64) -> bool {
+        self.dev.budget = RX_BUDGET;
+        self.dev.now_ms = now_ms;
+        self.refresh_filter();
         let link = self.dev.nic.link_up();
         if link != self.last_link {
             self.last_link = link;
@@ -129,7 +167,7 @@ impl<N: Nic> Stack<N> {
             }
         }
         if !link {
-            return;
+            return false;
         }
         self.iface
             .poll(instant(now_ms), &mut self.dev, &mut self.sockets);
@@ -148,11 +186,47 @@ impl<N: Nic> Stack<N> {
                 self.apply(lease);
             }
         }
+        self.dev.budget == 0
+    }
+
+    /// Keeps the ingress filter in step with the address and the sockets that are listening.
+    fn refresh_filter(&mut self) {
+        let f = &mut self.dev.filter;
+        f.addr = self.lease.as_ref().map(|l| l.address.address().octets());
+        f.prefix = self.lease.as_ref().map_or(0, |l| l.address.prefix_len());
+        f.addr6 = self
+            .iface
+            .ip_addrs()
+            .iter()
+            .filter_map(|c| match c {
+                IpCidr::Ipv6(c) => Some(c.address().octets()),
+                IpCidr::Ipv4(_) => None,
+            })
+            .collect();
+        f.tcp_listen.clear();
+        for h in self.tcp.iter().flatten() {
+            let s = self.sockets.get::<tcp::Socket>(*h);
+            if s.is_listening() {
+                f.tcp_listen.push(s.listen_endpoint().port);
+            }
+        }
+    }
+
+    /// Answer ICMP echo requests from the local subnet (rate-limited). Off by default.
+    pub fn set_echo_reply(&mut self, allow: bool) {
+        self.dev.filter.allow_echo = allow;
+    }
+
+    /// Ingress-filter counters (passed / dropped frames, last drop reason).
+    pub fn filter_stats(&self) -> crate::nic::Stats {
+        self.dev.stats
     }
 
     fn deconfigure(&mut self) {
         self.lease = None;
-        self.iface.update_ip_addrs(|a| a.clear());
+        // Drop the IPv4 address only; IPv6 (link-local/SLAAC) is independent of DHCP.
+        self.iface
+            .update_ip_addrs(|a| a.retain(|c| matches!(c, IpCidr::Ipv6(_))));
         self.iface.routes_mut().remove_default_ipv4_route();
         // Established connections cannot survive losing the address.
         for slot in self.tcp.iter().flatten() {
@@ -162,7 +236,7 @@ impl<N: Nic> Stack<N> {
 
     fn apply(&mut self, lease: Lease) {
         self.iface.update_ip_addrs(|a| {
-            a.clear();
+            a.retain(|c| matches!(c, IpCidr::Ipv6(_)));
             let _ = a.push(IpCidr::Ipv4(lease.address));
         });
         match lease.router {
@@ -217,27 +291,90 @@ impl<N: Nic> Stack<N> {
         Ok(())
     }
 
-    /// Returns the next echo reply, if one arrived.
+    /// Returns the next echo reply (IPv4 or IPv6), if one arrived.
     pub fn ping_result(&mut self) -> PingResult {
         let ident = self.ping_ident;
+        let caps = smoltcp::phy::ChecksumCapabilities::ignored(); // the interface verified them on ingress
         let sock = self.sockets.get_mut::<icmp::Socket>(self.icmp);
         while let Ok((payload, from)) = sock.recv() {
-            let Ok(pkt) = Icmpv4Packet::new_checked(payload) else {
-                continue;
-            };
-            let Ok(Icmpv4Repr::EchoReply {
-                ident: i, seq_no, ..
-            }) = Icmpv4Repr::parse(&pkt, &smoltcp::phy::ChecksumCapabilities::default())
-            else {
-                continue;
-            };
-            if i == ident {
-                match from {
-                    IpAddress::Ipv4(from) => return PingResult::Reply { seq: seq_no, from },
+            match from {
+                IpAddress::Ipv4(from) => {
+                    if let Ok(pkt) = Icmpv4Packet::new_checked(payload) {
+                        if let Ok(Icmpv4Repr::EchoReply {
+                            ident: i, seq_no, ..
+                        }) = Icmpv4Repr::parse(&pkt, &caps)
+                        {
+                            if i == ident {
+                                return PingResult::Reply { seq: seq_no, from };
+                            }
+                        }
+                    }
+                }
+                IpAddress::Ipv6(from) => {
+                    if let Ok(pkt) = Icmpv6Packet::new_checked(payload) {
+                        if let Ok(Icmpv6Repr::EchoReply {
+                            ident: i, seq_no, ..
+                        }) = Icmpv6Repr::parse(&from, &from, &pkt, &caps)
+                        {
+                            if i == ident {
+                                return PingResult::Reply6 { seq: seq_no, from };
+                            }
+                        }
+                    }
                 }
             }
         }
         PingResult::Pending
+    }
+
+    /// IPv6 addresses configured on the interface (link-local and SLAAC), if any.
+    pub fn ipv6_addresses(&self) -> Vec<Ipv6Address> {
+        self.iface
+            .ip_addrs()
+            .iter()
+            .filter_map(|c| match c {
+                IpCidr::Ipv6(c) => Some(c.address()),
+                IpCidr::Ipv4(_) => None,
+            })
+            .collect()
+    }
+
+    /// A non-link-local IPv6 address (from SLAAC), if the network provides one.
+    pub fn global_ipv6(&self) -> Option<Ipv6Address> {
+        self.ipv6_addresses()
+            .into_iter()
+            .find(|a| !is_link_local(&a.octets()))
+    }
+
+    /// Sends one ICMPv6 echo request. Link-local destinations use the link-local source address.
+    pub fn ping6(&mut self, dst: Ipv6Address, seq: u16) -> Result<(), Error> {
+        let link_local = is_link_local(&dst.octets());
+        let src = self
+            .ipv6_addresses()
+            .into_iter()
+            .find(|a| is_link_local(&a.octets()) == link_local)
+            .ok_or(Error::NoLease)?;
+        let ident = self.ping_ident;
+        let sock = self.sockets.get_mut::<icmp::Socket>(self.icmp);
+        if !sock.is_open() {
+            sock.bind(icmp::Endpoint::Ident(ident))
+                .map_err(|_| Error::Invalid)?;
+        }
+        let repr = Icmpv6Repr::EchoRequest {
+            ident,
+            seq_no: seq,
+            data: b"KS_OS ping",
+        };
+        let buf = sock
+            .send(repr.buffer_len(), IpAddress::Ipv6(dst))
+            .map_err(|_| Error::Busy)?;
+        repr.emit(
+            &src,
+            &dst,
+            &mut Icmpv6Packet::new_unchecked(buf),
+            &smoltcp::phy::ChecksumCapabilities::default(),
+        );
+        Ok(())
     }
 
     // ---- DNS ----
@@ -274,9 +411,10 @@ impl<N: Nic> Stack<N> {
             }
             Ok(addrs) => {
                 self.dns_query = None;
-                // IPv4 is the only address family compiled in.
-                let a = addrs.first().map(|a| match a {
-                    IpAddress::Ipv4(a) => *a,
+                // Only IPv4 results are used for now (the TCP API is IPv4).
+                let a = addrs.iter().find_map(|a| match a {
+                    IpAddress::Ipv4(a) => Some(*a),
+                    IpAddress::Ipv6(_) => None,
                 });
                 Some(a.ok_or(()))
             }

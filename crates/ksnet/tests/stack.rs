@@ -21,6 +21,7 @@ fn world(drop_every: u32) -> World {
     a.drop_every = drop_every;
     let client = Stack::new(a, 0x1234_5678_9abc_def0, 0);
     let mut server = Stack::new(ServerNic::new(b), 0x0fed_cba9_8765_4321, 0);
+    server.set_echo_reply(true);
     server.set_static(Lease {
         address: Ipv4Cidr::new(SERVER_IP, 24),
         router: None,
@@ -193,4 +194,63 @@ fn operations_without_lease_are_refused() {
     assert!(s.tcp_connect(Ipv4Address::new(1, 2, 3, 4), 80).is_err());
     assert!(s.resolve("x.org").is_err());
     assert!(s.nic().link_up());
+}
+
+#[test]
+fn flood_is_bounded_per_poll_and_garbage_is_filtered() {
+    let mut w = world(0);
+    w.configure();
+    let flood = w.server.nic().inner.tx.clone();
+    for i in 0..500u32 {
+        // Unsolicited UDP to a random port: must be dropped by the filter, never reach the stack.
+        let mut f = vec![0u8; 60];
+        f[0..6].copy_from_slice(&CLIENT_MAC);
+        f[6..12].copy_from_slice(&SERVER_MAC);
+        f[12..14].copy_from_slice(&[8, 0]);
+        f[14] = 0x45;
+        f[16..18].copy_from_slice(&(46u16).to_be_bytes());
+        f[22] = 64;
+        f[23] = 17;
+        f[26..30].copy_from_slice(&[10, 0, 2, 2]);
+        f[30..34].copy_from_slice(&[10, 0, 2, 15]);
+        f[34..36].copy_from_slice(&(1000 + i as u16).to_be_bytes());
+        f[36..38].copy_from_slice(&(2000 + i as u16).to_be_bytes());
+        flood.borrow_mut().push_back(f);
+    }
+    let before = w.client.filter_stats().dropped;
+    w.now += 1;
+    let more = w.client.poll(w.now);
+    assert!(
+        more,
+        "one poll must stop at its budget instead of draining a 500-frame flood"
+    );
+    let mut polls = 1;
+    while w.client.poll(w.now) {
+        polls += 1;
+        assert!(polls < 50);
+    }
+    assert!(polls >= 7, "500 frames at 64 per poll");
+    assert!(w.client.filter_stats().dropped - before >= 500);
+}
+
+#[test]
+fn closed_tcp_ports_stay_silent_and_pings_are_unanswered_by_default() {
+    let mut w = world(0);
+    w.configure();
+    // Client does not listen anywhere and has echo replies off (default): the server's probes get nothing.
+    let seen_before = w.client.filter_stats();
+    w.server.ping(CLIENT_IP, 1).unwrap();
+    let c = w.server.tcp_connect(CLIENT_IP, 4444).unwrap();
+    w.run(5_000, |_| false);
+    assert_eq!(
+        w.server.ping_result(),
+        PingResult::Pending,
+        "echo replies are off by default"
+    );
+    assert_ne!(w.server.tcp_state(c), TcpState::Established);
+    let s = w.client.filter_stats();
+    assert!(
+        s.dropped > seen_before.dropped,
+        "probes were dropped by the filter"
+    );
 }

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //! The driver-facing NIC trait and its adapter into smoltcp's `Device`.
 
+use crate::filter::{self, Config, RateLimit, Reason, Verdict};
 use smoltcp::phy::{Device, DeviceCapabilities, Medium, RxToken, TxToken};
 use smoltcp::time::Instant;
 
@@ -26,6 +27,22 @@ pub trait Nic {
 pub struct NicDevice<N: Nic> {
     pub nic: N,
     rx: [u8; MAX_FRAME],
+    /// Ingress filter configuration (kept current by the stack).
+    pub filter: Config,
+    /// Frames the stack may still take in this poll (bounds the work one pass can do).
+    pub budget: u32,
+    pub now_ms: i64,
+    echo_limit: RateLimit,
+    pub stats: Stats,
+}
+
+/// Counters for the ingress filter, for diagnostics.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Stats {
+    pub passed: u64,
+    pub dropped: u64,
+    pub echo_replies: u64,
+    pub last_drop: Option<Reason>,
 }
 
 impl<N: Nic> NicDevice<N> {
@@ -33,6 +50,11 @@ impl<N: Nic> NicDevice<N> {
         Self {
             nic,
             rx: [0; MAX_FRAME],
+            filter: Config::default(),
+            budget: u32::MAX,
+            now_ms: 0,
+            echo_limit: RateLimit::new(10),
+            stats: Stats::default(),
         }
     }
 }
@@ -74,10 +96,38 @@ impl<N: Nic> Device for NicDevice<N> {
         Self: 'a;
 
     fn receive(&mut self, _ts: Instant) -> Option<(Self::RxToken<'_>, Self::TxToken<'_>)> {
-        let n = self.nic.receive(&mut self.rx)?;
-        let Self { nic, rx } = self;
-        let frame = rx.get(..n)?;
-        Some((Rx { frame }, Tx { nic }))
+        loop {
+            if self.budget == 0 {
+                return None; // the caller polls again soon; the UI must not starve
+            }
+            let n = self.nic.receive(&mut self.rx)?;
+            self.budget = self.budget.saturating_sub(1);
+            let frame = self.rx.get(..n)?;
+            match filter::ingress(frame, &self.filter) {
+                Verdict::Pass => {
+                    self.stats.passed = self.stats.passed.saturating_add(1);
+                    let Self { nic, rx, .. } = self;
+                    return Some((
+                        Rx {
+                            frame: rx.get(..n)?,
+                        },
+                        Tx { nic },
+                    ));
+                }
+                Verdict::Drop(why) => {
+                    self.stats.dropped = self.stats.dropped.saturating_add(1);
+                    self.stats.last_drop = Some(why);
+                }
+                Verdict::EchoRequest => {
+                    if self.echo_limit.allow(self.now_ms) {
+                        if let Some(reply) = filter::echo_reply(frame) {
+                            let _ = self.nic.transmit(&reply);
+                            self.stats.echo_replies = self.stats.echo_replies.saturating_add(1);
+                        }
+                    }
+                }
+            }
+        }
     }
 
     fn transmit(&mut self, _ts: Instant) -> Option<Self::TxToken<'_>> {

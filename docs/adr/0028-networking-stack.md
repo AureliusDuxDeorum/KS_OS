@@ -46,3 +46,26 @@ and a NIC is a DMA master that parses attacker-controlled frames and shares desc
   PHY, 2.5G status bit, NVM-loaded MAC timing). `docs/hardware-testing.md` lists the `net:` lines to send back.
 - Gate G2 follow-ups: IOMMU (NIC is a trusted DMA master), interrupt-driven RX, IPv6, a userland socket API,
   DNS hardening (DNSSEC/DoT) and a firewall policy.
+
+## Addendum (2026-11-02): security review follow-up (ADR-0030 S-17, S-18)
+- **Ingress filter** (`ksnet::filter`, 15 host tests): every frame is judged before smoltcp sees it. Default-deny
+  for anything that starts a conversation with us: ARP (sender must match the Ethernet source), DHCP/DNS answers,
+  replies to our own TCP connections, ICMP errors/echo replies, and TCP SYNs only to ports that are explicitly
+  listening. Dropped silently: IP options/fragments, martian and self-spoofed sources, broadcast TCP/ICMP, redirects,
+  unsolicited UDP, IPv6 extension-header chains (except hop-by-hop wrapping MLD), NDP with hop limit != 255.
+- **Echo replies are off by default** (`auto-icmp-echo-reply` was removed); an own responder answers unicast echo
+  requests from the local subnet only, rate-limited to 10/s, when `Stack::set_echo_reply(true)`.
+- **IPv6**: link-local (opaque per-boot interface id) plus SLAAC from router advertisements, ICMPv6 echo, same filter.
+  The SLAAC global address still embeds the MAC (EUI-64, smoltcp); privacy extensions are a follow-up. TCP/DNS over
+  IPv6 are not exposed yet.
+- **Interrupt-driven receive**: one MSI-X vector for igc/igb (IVAR/EIMS, auto-mask, link changes) and for virtio-net;
+  the handler only counts, `net::service()` drains with a 64-frame budget per pass and re-arms; a 10 ms safety poll
+  covers protocol timers and lost interrupts; polled mode remains the fallback when MSI/MSI-X is unavailable.
+  The igc receive filter accepts all multicast (needed for IPv6 neighbour discovery); the ingress filter then
+  drops every group that is not ours.
+- **DNS-over-TLS spike: deferred.** There is no audited `no_std` TLS client with a trust store that we can adopt
+  without a wall clock, certificate store and entropy plumbing (Stage 5/7 work). DNS keeps smoltcp's randomised
+  transaction id and source port; answers only pass the filter from UDP source port 53.
+- Two bugs found while building this: a smoltcp address table too small for dual stack silently dropped the IPv4
+  address when SLAAC finished first (fixed with `iface-max-addr-count-8`), and fuzzing showed smoltcp panics if an
+  IPv6 link-local address is not configured with SLAAC enabled (we now configure one).

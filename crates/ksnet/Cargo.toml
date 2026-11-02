@@ -13,8 +13,7 @@ ksparse = { path = "../ksparse" }
 version = "0.14"
 default-features = false
 features = [
-  "auto-icmp-echo-reply",
-  "alloc", "medium-ethernet", "proto-ipv4", "proto-dhcpv4", "proto-dns",
+  "alloc", "medium-ethernet", "proto-ipv4", "proto-ipv6", "proto-ipv6-slaac", "multicast", "iface-max-addr-count-8", "proto-dhcpv4", "proto-dns",
   "socket-tcp", "socket-udp", "socket-icmp", "socket-dhcpv4", "socket-dns",
 ]
 
