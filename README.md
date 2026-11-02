@@ -6,10 +6,11 @@ tooling, and the decision record.
 
 **Current state (Stage 2, in progress):** boots under UEFI via Limine, announces **OS operating**
 on serial and screen, and offers a **Power off** button and a **Boot into UEFI**
-button (keyboard or PS/2 mouse).
+button (keyboard or mouse over PS/2, USB or Bluetooth LE), and brings up wired networking
+(DHCP, DNS, ICMP, TCP). Coding agents / new contributors: start with [STRUCTURE.md](STRUCTURE.md).
 
 ## Download the boot image
-The latest ready-to-write image is in the top-level folder **[`KS_OS-v0.1.0/`](KS_OS-v0.1.0/)** — one file to
+The latest ready-to-write image is in the top-level folder **[`KS_OS-v0.2.0/`](KS_OS-v0.2.0/)** — one file to
 write to a USB stick, plus a plain-text `README.txt`. Versions are `X.Y.Z` (see
 [docs/VERSIONING.md](docs/VERSIONING.md)); changes are listed in [CHANGELOG.md](CHANGELOG.md).
 

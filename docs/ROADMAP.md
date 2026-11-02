@@ -28,8 +28,10 @@ Target hardware: Intel I225-V NIC, USB Bluetooth controller (Realtek/MediaTek/Br
 - ☑ S2.P4 ACPI & PCI — `ksparse` host-tested/fuzzed parsers *(closes R9)*, ECAM/legacy enumeration, BAR sizing, MSI/MSI-X, DMA verified against QEMU `edu`, AML deferred by decision *(R7)* ([ADR-0023](adr/0023-acpi-pci-and-untrusted-parsers.md))
 - ☑ S2.P5 USB xHCI — controller, enumeration, hubs, USB HID with full report-descriptor parser *(done: xHCI + MSI-X, enumeration, hubs, bulk/interrupt endpoints, HID with fuzzed report parser, on-screen log; [ADR-0024](adr/0024-usb-xhci-and-hid.md); no hot-plug yet)*
 - ◐ S2.P6 Bluetooth *(host stack done and host-verified; MediaTek bring-up awaiting owner's hardware test — [ADR-0025](adr/0025-bluetooth-host-stack.md), [hardware-testing.md](hardware-testing.md); Classic HID and Realtek loader still to do)* — — USB HCI transport, vendor firmware loaders (internal MediaTek first, ASUS BT500 optional second; [ADR-0017](adr/0017-bluetooth-first-internal-controller.md)), HCI LE, SMP (LE Secure Connections), ATT/GATT, HID-over-GATT first ([ADR-0019](adr/0019-ble-hid-first-and-validation-targets.md)), then L2CAP/SDP, SSP pairing and Classic HID, bond handling, unified input events
-- ☐ S2.P7 Networking — `igc` (I225-V) driver, Ethernet, smoltcp, DHCP, DNS, ICMP, TCP; virtio-net/e1000e for CI
-- ☐ S2.P8 Integration — Bluetooth/network status and pairing screen in the UI, automated + hardware-in-the-loop tests
+- ◐ S2.P7 Networking *(done and verified in QEMU on virtio-net and igb; real I225-V awaiting the owner's hardware test — [ADR-0028](adr/0028-networking-stack.md))* — `igc` (I225-V) driver, Ethernet, smoltcp, DHCP, DNS, ICMP, TCP; virtio-net for CI
+- ☐ S2.P7.5 Testing — owner's hardware test of Bluetooth + LAN ([hardware-testing.md](hardware-testing.md)); fix whatever the logs show
+- ☐ S2.P7.6 UI foundation — real UI framework (owner supplies the KS design rundown first)
+- ☐ S2.P8 Integration — Bluetooth/network status and pairing screen in the UI (follows P7.6), automated + hardware-in-the-loop tests
 - ☐ **Gate G2:** hardening review (cannot close while G1 items R3, R8, R9 are open)
 
 ## Later stages (outline only — revised before each stage starts, see ADR-0022 open questions)

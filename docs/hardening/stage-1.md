@@ -115,3 +115,15 @@ then change **Status** to CLOSED and update `docs/ROADMAP.md`.
   automatic pairing with any discoverable HID device (needs an authorisation policy); Just Works
   pairs are MITM-exposed; no Classic BR/EDR.
 - MediaTek bring-up and the USB HCI transport are **unverified on hardware**; see `docs/hardware-testing.md`.
+
+## 11. Addendum (2026-11-02, S2.P7 Networking)
+- New untrusted-data surface: every Ethernet frame (ARP/IPv4/ICMP/UDP/TCP/DHCP/DNS — parsed by smoltcp,
+  upstream-fuzzed) and everything the NIC writes into shared descriptor/used rings (parsed by `ksnet`,
+  fuzz target `network`: 450 k executions, no crash after the fix below).
+- **Fuzzer finding, fixed:** the virtqueue used the `next` field stored in device-shared descriptor memory
+  to walk/recycle chains; a hostile device could force out-of-range indexing. Chain links are now kept in
+  driver-private memory (regression test `virtqueue_ignores_descriptor_next_scribbled_by_the_device`).
+- **Open items for Gate G2:** the NIC is a trusted DMA master until the IOMMU is enforced; the host answers
+  ICMP echo and has no firewall; receive is polled (no interrupts); IPv4 only; DNS has no DNSSEC/DoT;
+  weak TCP seed fallback if no hardware RNG (logged); I225-V specifics are unverified on hardware.
+

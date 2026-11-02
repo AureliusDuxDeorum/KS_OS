@@ -31,3 +31,5 @@ Process: [ADR-0001](0001-record-architecture-decisions.md). Template: [template.
 | [0025](0025-bluetooth-host-stack.md) | Bluetooth host stack: design, security decisions and verification boundary | Accepted |
 | [0026](0026-release-process-and-versioning.md) | Release process and versioning (X.Y.Z) | Accepted |
 | [0027](0027-licensing.md) | Licensing: Apache-2.0 | Accepted |
+| [0028](0028-networking-stack.md) | Networking: smoltcp stack, igc/igb and virtio-net drivers | Accepted |
+| [0029](0029-structure-document-for-agents.md) | STRUCTURE.md — a generated platform reference for coding agents | Accepted |

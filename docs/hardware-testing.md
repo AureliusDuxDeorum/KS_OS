@@ -3,7 +3,7 @@
 How to test KS_OS on the owner's machine and what to send back. Nothing here needs a serial port.
 
 ## 1. Get the image (no build tools needed)
-The ready-made boot image lives in the repository's top-level folder **`KS_OS-v0.1.0/`**, with its
+The ready-made boot image lives in the repository's top-level folder **`KS_OS-v0.2.0/`**, with its
 own `README.txt`. Add the Bluetooth firmware (copied from your Linux install; it is not redistributed)
 with the helper script in the same folder:
 
@@ -12,14 +12,14 @@ mkdir -p ~/ksfw
 cp /lib/firmware/mediatek/BT_RAM_CODE_MT7961_1_2_hdr.bin.zst  ~/ksfw/
 cp /lib/firmware/mediatek/BT_RAM_CODE_MT7961_1a_2_hdr.bin.zst ~/ksfw/
 sudo apt install mtools zstd            # once
-cd KS_OS-v0.1.0
-./add-bluetooth-firmware.sh KS_OS-v0.1.0.img ~/ksfw
+cd KS_OS-v0.2.0
+./add-bluetooth-firmware.sh KS_OS-v0.2.0.img ~/ksfw
 ```
 
 Then write the image to a USB stick (**this erases the stick**; check the device with `lsblk`):
 
 ```bash
-sudo dd if=KS_OS-v0.1.0.img of=/dev/sdX bs=4M conv=fsync status=progress
+sudo dd if=KS_OS-v0.2.0.img of=/dev/sdX bs=4M conv=fsync status=progress
 ```
 
 Boot it from the firmware boot menu. Secure Boot must be off (the image is not signed).
@@ -54,6 +54,17 @@ screen. The lines that matter start with `usb:` and `bt:`. In particular:
 - `bt: controller ready: ...` — Bluetooth is up. After that: scanning, connecting, pairing lines.
 
 If something fails, the status line and the log say which step; the photo is enough to fix it.
+
+## 4b. Network (Intel I225-V)
+Plug the LAN cable in **before** powering on. Look for these `net:` lines on the log screen (`L`):
+- `net: Intel I225-V/I226-V (igc) ready, mac …; link 1000 Mb/s full duplex` — the NIC was found, reset and
+  its link negotiated (2500 Mb/s if your switch/router supports it). `no link` at first is normal; it
+  switches to `link up` within a few seconds.
+- `net: phy BMCR=… BMSR=…` — the PHY state; `net: phy not reachable over MDIO` would be a bug to report.
+- `net: …: 192.168.x.y/24 gateway … dns …` — DHCP worked.
+- `net: …: gateway … reachable (N ms)` — ICMP echo to the router worked: the whole path
+  (NIC → stack → router) is verified. `does not answer ping` means the router ignores ping (not necessarily a fault).
+If the NIC is not listed at all, send the `pci:` line containing `8086:15f3`.
 
 ## 5. Safe fallbacks
 - Nothing in this image writes to disks. The only persistent write is the Bluetooth bond variable
