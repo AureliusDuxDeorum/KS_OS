@@ -50,6 +50,11 @@ overflow checks active in the release kernel. New tests: `ksbt/tests/policy.rs` 
 `cpu-protections` QEMU test (S-03). S-05/S-06/S-07/S-09 are covered by review plus the existing
 end-to-end tests (no behaviour change on valid hardware).
 
+## Update (2026-11-02): dispositions after phases A–H
+The open and accepted items S-10 to S-18 were worked through afterwards; the outcome with evidence is in
+[ADR-0031](0031-security-review-2.md). In short: S-10, S-11, S-13, S-17 (DoT deferred), S-18 fixed; S-12, S-14, S-15, S-16
+fixed in code and emulation (hardware-unverified; canaries and interrupt remapping still open).
+
 ## Consequences
 - After the fixes, every High finding is either fixed (S-01) or tracked as a Gate-G2 blocker (S-14).
 - `docs/hardening/stage-1.md` gets an addendum; `STRUCTURE.md` conventions list the new lint gate.

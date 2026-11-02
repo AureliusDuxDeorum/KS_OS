@@ -3,6 +3,17 @@
 Versions follow `X.Y.Z` as defined in [docs/VERSIONING.md](docs/VERSIONING.md): `X` = finished (0 = not),
 `Y` = version, `Z` = bug patch.
 
+## 0.4.0 — Gate G2 hardening (not finished)
+
+Boot image: [`KS_OS-v0.4.0/`](KS_OS-v0.4.0/). Evidence and limits: [ADR-0031](docs/adr/0031-security-review-2.md).
+
+- **Network:** default-deny ingress firewall, echo replies off by default, IPv6 (SLAAC), interrupt-driven receive (MSI-X).
+- **DMA protection:** deny-by-default IOMMU for Intel VT-d and AMD-Vi (escape hatch: `iommu=off`).
+- **Boot chain:** kernel, firmware and configuration are hash-pinned; optional Secure Boot with your own keys (`secure-boot.sh`);
+  KASLR; `set-cmdline.sh` to change kernel options safely.
+- **Secrets:** Bluetooth bonds are encrypted with a key sealed in the TPM (`bt.bonds=unencrypted` to opt out).
+- **Not yet verified on real hardware** — see the Gate G2 checklist in [docs/hardware-testing.md](docs/hardware-testing.md).
+
 ## 0.3.0 — robust parsers, strict keyboard pairing (not finished)
 
 Boot image: [`KS_OS-v0.3.0/`](KS_OS-v0.3.0/). Security work: [ADR-0030](docs/adr/0030-security-review-1.md) follow-ups.

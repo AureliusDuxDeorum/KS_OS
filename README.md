@@ -10,7 +10,7 @@ button (keyboard or mouse over PS/2, USB or Bluetooth LE), and brings up wired n
 (DHCP, DNS, ICMP, TCP). Coding agents / new contributors: start with [STRUCTURE.md](STRUCTURE.md).
 
 ## Download the boot image
-The latest ready-to-write image is in the top-level folder **[`KS_OS-v0.3.0/`](KS_OS-v0.3.0/)** — one file to
+The latest ready-to-write image is in the top-level folder **[`KS_OS-v0.4.0/`](KS_OS-v0.4.0/)** — one file to
 write to a USB stick, plus a plain-text `README.txt`. Versions are `X.Y.Z` (see
 [docs/VERSIONING.md](docs/VERSIONING.md)); changes are listed in [CHANGELOG.md](CHANGELOG.md).
 

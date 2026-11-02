@@ -6,7 +6,7 @@
 > `cargo xtask structure`; CI fails if this file is stale (`cargo xtask structure --check`).
 > Hand-written text lives in `xtask/structure/STRUCTURE.md.in` — edit that, not this file.
 
-- **Version:** `0.3.0` (`X.Y.Z`: X = finished (0/1), Y = version, Z = bug patch — `docs/VERSIONING.md`)
+- **Version:** `0.4.0` (`X.Y.Z`: X = finished (0/1), Y = version, Z = bug patch — `docs/VERSIONING.md`)
 - **Repository:** `AureliusDuxDeorum/KS_OS` · **Licence:** Apache-2.0 (the KS name and logos are not licensed, `TRADEMARKS.md`)
 - **Owner:** Nils Seidenberg · **Process:** Stages → Phases → Steps, a hardening gate between stages, every
   decision recorded as an ADR in `docs/adr/` · Conventional Commits, one logical change per commit.
@@ -135,6 +135,7 @@ KS_OS/
 ├── KS_OS-v0.2.0/ — release: boot image, SHA256SUMS, licences (7 files)
 ├── KS_OS-v0.2.1/ — release: boot image, SHA256SUMS, licences (7 files)
 ├── KS_OS-v0.3.0/ — release: boot image, SHA256SUMS, licences (7 files)
+├── KS_OS-v0.4.0/ — release: boot image, SHA256SUMS, licences (9 files)
 ├── LICENSE — Apache License 2.0
 ├── NOTICE — Copyright and third-party notice
 ├── README.md — KS_OS
@@ -254,6 +255,7 @@ KS_OS/
 │   │   ├── 0028-networking-stack.md — ADR-0028: Networking: smoltcp stack, igc/igb and virtio-net drivers
 │   │   ├── 0029-structure-document-for-agents.md — ADR-0029: STRUCTURE.md — a generated platform reference for coding agents
 │   │   ├── 0030-security-review-1.md — ADR-0030: Security review 1 — scan results and dispositions
+│   │   ├── 0031-security-review-2.md — ADR-0031: Security review 2 — closing ADR-0030, Gate G2 record
 │   │   ├── README.md — Architecture Decision Records
 │   │   └── template.md — ADR-NNNN: Title
 │   ├── hardening/
@@ -381,3 +383,4 @@ KS_OS/
 - [`0028-networking-stack.md`](docs/adr/0028-networking-stack.md) — ADR-0028: Networking: smoltcp stack, igc/igb and virtio-net drivers
 - [`0029-structure-document-for-agents.md`](docs/adr/0029-structure-document-for-agents.md) — ADR-0029: STRUCTURE.md — a generated platform reference for coding agents
 - [`0030-security-review-1.md`](docs/adr/0030-security-review-1.md) — ADR-0030: Security review 1 — scan results and dispositions
+- [`0031-security-review-2.md`](docs/adr/0031-security-review-2.md) — ADR-0031: Security review 2 — closing ADR-0030, Gate G2 record

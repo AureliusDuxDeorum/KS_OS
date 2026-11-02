@@ -32,7 +32,7 @@ Target hardware: Intel I225-V NIC, USB Bluetooth controller (Realtek/MediaTek/Br
 - ☐ S2.P7.5 Testing — owner's hardware test of Bluetooth + LAN ([hardware-testing.md](hardware-testing.md)); fix whatever the logs show
 - ☐ S2.P7.6 UI foundation — real UI framework (owner supplies the KS design rundown first)
 - ☐ S2.P8 Integration — Bluetooth/network status and pairing screen in the UI (follows P7.6), automated + hardware-in-the-loop tests
-- ☐ **Gate G2:** hardening review (cannot close while G1 items R3, R8, R9 are open)
+- ◐ **Gate G2:** hardening review — all blockers fixed in code and emulation ([ADR-0031](adr/0031-security-review-2.md)); closes with the owner's hardware test (checklist in [hardware-testing.md](hardware-testing.md))
 
 ## Later stages (outline only — revised before each stage starts, see ADR-0022 open questions)
 - Stage 3: Threads, scheduler, user mode, syscalls, ELF loader
