@@ -381,7 +381,7 @@ dependencies = [
 
 [[package]]
 name = "ksbt"
-version = "0.1.0"
+version = "0.2.1"
 dependencies = [
  "aes",
  "cmac",
@@ -392,7 +392,7 @@ dependencies = [
 
 [[package]]
 name = "ksnet"
-version = "0.1.0"
+version = "0.2.1"
 dependencies = [
  "ksparse",
  "smoltcp",
@@ -400,7 +400,7 @@ dependencies = [
 
 [[package]]
 name = "ksparse"
-version = "0.1.0"
+version = "0.2.1"
 
 [[package]]
 name = "ksparse-fuzz"
