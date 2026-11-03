@@ -30,7 +30,7 @@ Target hardware: Intel I225-V NIC, USB Bluetooth controller (Realtek/MediaTek/Br
 - ◐ S2.P6 Bluetooth *(host stack done and host-verified; MediaTek bring-up awaiting owner's hardware test — [ADR-0025](adr/0025-bluetooth-host-stack.md), [hardware-testing.md](hardware-testing.md); Classic HID and Realtek loader still to do)* — — USB HCI transport, vendor firmware loaders (internal MediaTek first, ASUS BT500 optional second; [ADR-0017](adr/0017-bluetooth-first-internal-controller.md)), HCI LE, SMP (LE Secure Connections), ATT/GATT, HID-over-GATT first ([ADR-0019](adr/0019-ble-hid-first-and-validation-targets.md)), then L2CAP/SDP, SSP pairing and Classic HID, bond handling, unified input events
 - ◐ S2.P7 Networking *(done and verified in QEMU on virtio-net and igb; real I225-V awaiting the owner's hardware test — [ADR-0028](adr/0028-networking-stack.md))* — `igc` (I225-V) driver, Ethernet, smoltcp, DHCP, DNS, ICMP, TCP; virtio-net for CI
 - ☐ S2.P7.5 Testing — owner's hardware test of Bluetooth + LAN ([hardware-testing.md](hardware-testing.md)); fix whatever the logs show
-- ☐ S2.P7.6 UI foundation — real UI framework (owner supplies the KS design rundown first)
+- ☐ S2.P7.6 UI foundation — real UI framework (owner supplies the KS design rundown first; the icon list to design is in [docs/design/](design/README.md))
 - ☐ S2.P8 Integration — Bluetooth/network status and pairing screen in the UI (follows P7.6), automated + hardware-in-the-loop tests
 - ◐ **Gate G2:** hardening review — all blockers fixed in code and emulation ([ADR-0031](adr/0031-security-review-2.md)); closes with the owner's hardware test (checklist in [hardware-testing.md](hardware-testing.md))
 

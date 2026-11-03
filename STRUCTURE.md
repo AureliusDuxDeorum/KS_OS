@@ -258,6 +258,10 @@ KS_OS/
 │   │   ├── 0031-security-review-2.md — ADR-0031: Security review 2 — closing ADR-0030, Gate G2 record
 │   │   ├── README.md — Architecture Decision Records
 │   │   └── template.md — ADR-NNNN: Title
+│   ├── design/
+│   │   ├── KS_OS-Icon-List.pdf
+│   │   ├── README.md — Design assets
+│   │   └── icon-list.txt — 1
 │   ├── hardening/
 │   │   └── stage-1.md — Hardening gate G1 — end of Stage 1
 │   ├── hardware-testing.md — Hardware test guide
@@ -329,6 +333,8 @@ KS_OS/
 │       │   └── xhci.rs — xHCI (USB 3.x) host controller driver
 │       └── vmm.rs — Kernel virtual memory manager
 ├── rust-toolchain.toml — Pinned Rust toolchain
+├── tools/
+│   └── make_icon_pdf.py
 └── xtask/
     ├── Cargo.toml
     ├── release/
